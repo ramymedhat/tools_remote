@@ -22,7 +22,7 @@ syntax = "proto3";
 
 package include_processor;
 
-option java_package = "com.google.devtools.build.lib.remote";
+option java_package = "com.google.devtools.build.lib.include_processor";
 option java_multiple_files = true;
 option java_outer_classname = "IncludeProcessorProto";
 
@@ -32,6 +32,9 @@ message ProcessIncludesRequest {
 
   // Command arguments.
   repeated string args = 2;
+
+  // Environment variables in name=value format.
+  repeated string envs = 3;
 }
 
 message ProcessIncludesResponse {

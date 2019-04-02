@@ -26,6 +26,7 @@
 #include "src/main/proto/command_server.grpc.pb.h"
 #include "src/main/proto/command_server.pb.h"
 #include "src/main/proto/include_processor.pb.h"
+#include "src/main/proto/include_processor.grpc.pb.h"
 
 #define INCLUDE_PROCESSOR_PROXY_FAILURE 44
 
@@ -35,8 +36,10 @@ using devtools_goma::GomaIPC;
 using grpc::Channel;
 using grpc::ClientContext;
 using grpc::ClientReader;
+using grpc::Status;
 using include_processor::ProcessIncludesRequest;
 using include_processor::ProcessIncludesResponse;
+using include_processor::ProcessIncludesService;
 using std::cerr;
 using std::chrono::milliseconds;
 using std::chrono::duration_cast;
@@ -98,106 +101,58 @@ string GetCompilerDir(const char* compiler) {
   return compiler_dir;
 }
 
-int GetInputsFromIncludeProcessorProxy(int argc, char** argv, const char** env,
-                                       const string& cwd, set<string>* inputs) {
+int GetInputsFromIncludeProcessor(const string& cmd_id, int argc, char** argv, const char** env,
+                                  const string& cwd, set<string>* inputs) {
+  const char* server_address = getenv("INCLUDE_SERVER_ADDRESS");
+  if (!server_address) {
+    server_address = "localhost:8070";
+  }
+  const char* server_instances_var = getenv("INCLUDE_SERVER_INSTANCES");
+  int server_instances = 1;
+  if (server_instances_var && !absl::SimpleAtoi(server_instances_var, &server_instances)) {
+    cerr << "INCLUDE_SERVER_INSTANCES should be an integer.";
+    return 35;
+  }
+  if (server_instances > 1) {
+    int port = 8070;
+    vector<string> parts = absl::StrSplit(server_address, ':');
+    if (!absl::SimpleAtoi(parts[1], &port)) {
+      cerr << "If INCLUDE_SERVER_INSTANCES>1, INCLUDE_SERVER_ADDRESS should be host:port.";
+      return 35;
+    }
+    port += rand() % server_instances;
+    server_address = absl::StrCat(parts[0], ":", port).c_str();
+  }
   ProcessIncludesRequest req;
-  req.set_cwd(cwd);
+  req.set_cwd(GetCwd());
   for (int i = 4; i < argc; ++i) {
     req.add_args(argv[i]);
   }
-  const char* verbose = getenv("VERBOSE");
+  while (*env) {
+    req.add_envs(*env++);
+  }
+  bool verbose = getenv("VERBOSE") != nullptr;
   if (verbose) {
-    cout << "Sending process includes request:\n" << req.DebugString() << "\n";
+    cout << "Calling remote server on " << server_address << "\n" << req.DebugString();
   }
-  const char *goma_tmp_dir = getenv("GOMA_TMP_DIR");
-  if (goma_tmp_dir == nullptr) {
-    goma_tmp_dir = "/tmp/goma_tmp";
-  }
-  GomaIPC goma_ipc(std::unique_ptr<GomaIPC::ChanFactory>(
-      new GomaIPC::GomaIPCSocketFactory(absl::StrCat(goma_tmp_dir, "/goma.ipc"))));
-  GomaIPC::Status status;
+  auto channel =
+      grpc::CreateChannel(server_address, grpc::InsecureChannelCredentials());
+  std::unique_ptr<ProcessIncludesService::Stub> stub(ProcessIncludesService::NewStub(channel));
+  ClientContext context;  // No deadline.
   ProcessIncludesResponse resp;
-  if (goma_ipc.Call("/ipc", &req, &resp, &status) < 0) {
-    cerr << "Process includes failed: " << status.DebugString() << "\n";
-    return INCLUDE_PROCESSOR_PROXY_FAILURE;
-  }
-  if (verbose) {
-    cout << "Received process includes response:\n" << resp.DebugString() << "\n";
-  }
-  for (const string& i : resp.includes()) {
-    inputs->insert(NormalizedRelativePath(cwd, i));
-  }
-  return 0;
-}
-
-int GetInputsFromIncludeProcessor(int argc, char** argv, const char** env,
-                                  const string& cwd, set<string>* inputs) {
-  if (getenv("USE_IP_PROXY")) {
-    return GetInputsFromIncludeProcessorProxy(argc, argv, env, cwd, inputs);
-  }
-
-  string processor_path = absl::StrCat(getenv("HOME"), "/goma/cpp_include_processor");
-  string compiler_path = absl::StrCat(cwd, "/", argv[4]);
-  vector<const char*> args;
-  args.reserve(argc - 1);
-  args.emplace_back(processor_path.c_str());
-  args.emplace_back(argv[4][0] == '/' ? argv[4] : compiler_path.c_str());
-  for (int i = 5; i < argc; ++i) {
-    args.emplace_back(argv[i]);
-  }
-  args.emplace_back(nullptr);
-
-  const int kPipeRead = 0;
-  const int kPipeWrite = 1;
-  int aStdoutPipe[2];
-
-  if (pipe(aStdoutPipe) < 0) {
-    cerr << "Error allocating pipe for child output redirect\n";
+  Status status = stub->ProcessIncludes(&context, req, &resp);
+  if (!status.ok()) {
+    cout << "ProcessIncludes rpc failed:" << status.error_message() << "\n";
     return 1;
   }
-
-  bool verbose = getenv("VERBOSE");
   if (verbose) {
-    for (unsigned int i = 0; i < args.size() - 1; ++i) {
-      cout << args[i] << " ";
-    }
-    cout << "\n";
+    cout << "Server returned response:\n" << resp.DebugString() << "\n";
   }
-  int fork_result = fork();
-  if (fork_result < 0) {
-    cerr << "Failed to create child process: " << fork_result << "\n";
-    close(aStdoutPipe[kPipeRead]);
-    close(aStdoutPipe[kPipeWrite]);
-    return fork_result;
+  if (resp.time_msec() > 500) {
+    cerr << cmd_id << "> Slow includes time: " << resp.time_msec() << " ms\n";
   }
-  if (0 == fork_result) {
-    // Child continues here.
-    if (dup2(aStdoutPipe[kPipeWrite], STDOUT_FILENO) == -1) {
-      cerr << "Failed to redirect stdout\n";
-      exit(1);
-    }
-    close(aStdoutPipe[kPipeRead]);
-    close(aStdoutPipe[kPipeWrite]);
-
-    exit(execvp(args[0], const_cast<char**>(args.data())));
-  }
-  // Parent continues here.
-
-  close(aStdoutPipe[kPipeWrite]);
-
-  char buf[10001];
-  string out;
-  unsigned int n;
-  while ((n = read(aStdoutPipe[kPipeRead], buf, sizeof(buf)-1))) {
-    buf[n] = 0;
-    out += buf;  // This is fine, we won't do it a lot.
-  }
-
-  if (verbose) {
-    cout << "Include preprocessor returned:\n" << out << "\n";
-  }
-  for (const auto& input : absl::StrSplit(out, '\n', absl::SkipEmpty())) {
-    inputs->insert(NormalizedRelativePath(cwd, string(input)));
+  for (const auto& input : resp.includes()) {
+    inputs->insert(NormalizedRelativePath(cwd, input));
   }
   return 0;
 }
@@ -236,10 +191,8 @@ int ComputeInputs(int argc, char** argv, const char** env, const string& cwd, co
     }
   }
   if (*is_compile) {
-    int proc_res = GetInputsFromIncludeProcessor(argc, argv, env, cwd, inputs);
-    // Ignore failures from include processor proxy failures since it fails deterministically on
-    // assembly commands today which we will eventually fix.
-    if (proc_res != 0 && proc_res != INCLUDE_PROCESSOR_PROXY_FAILURE) {
+    int proc_res = GetInputsFromIncludeProcessor(cmd_id, argc, argv, env, cwd, inputs);
+    if (proc_res != 0) {
       return proc_res;
     }
     if (inputs->empty()) {
@@ -396,7 +349,6 @@ int ExecuteRemotely(const RunRequest& req) {
       cerr << "If PROXY_INSTANCES>1, PROXY_ADDRESS should be host:port.";
       return 35;
     }
-    srand(time(nullptr));
     port += rand() % proxy_instances;
     proxy_address = absl::StrCat(parts[0], ":", port).c_str();
   }
@@ -504,6 +456,7 @@ int ExecuteCommand(int argc, char** argv, const char** env) {
 }
 
 int SelectAndRunCommand(int argc, char** argv, const char** env) {
+  srand(time(nullptr));
   // Hack to allow goma_ctl ensure_start to work. This is called by
   // the Android @head build when USE_GOMA is set.
   if (!strcmp(argv[1], "tmp_dir")) {
