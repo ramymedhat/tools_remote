@@ -169,7 +169,6 @@ int ComputeInputs(int argc, char** argv, const char** env, const string& cwd, co
     inputs_from_args.insert(string(input));
   }
   bool next_is_input = false;
-  bool is_as = false;
   *is_compile = false;
   set<string> cc_input_args({"-I", "-c", "-isystem", "-quote"});
   vector<string> input_prefixes({"-L", "--gcc_toolchain"});
@@ -185,9 +184,6 @@ int ComputeInputs(int argc, char** argv, const char** env, const string& cwd, co
       if (absl::StartsWith(argv[i], prefix)) {
         inputs_from_args.insert(argv[i] + prefix.length());
       }
-    }
-    if (!strcmp(argv[i], "-D__ASSEMBLY__")) {
-      is_as = true;
     }
   }
   if (*is_compile) {
@@ -208,10 +204,6 @@ int ComputeInputs(int argc, char** argv, const char** env, const string& cwd, co
   inputs->insert("build");  // Needed for Android 9?
   inputs->insert("toolchain");
   inputs->insert(GetCompilerDir(argv[4]));  // For both compile and link commands?
-  if (is_as) {
-    // Horrible hack for Android 7 assembly actions.
-    inputs->insert("prebuilts/gcc/linux-x86/arm/arm-linux-androideabi-4.9/arm-linux-androideabi/bin/as");
-  }
   if (is_compile) {
     inputs->insert(argv[argc-1]);  // For Android compile commands, the compiled file is last.
   } // Linker commands need special treatment as well.
