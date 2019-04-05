@@ -93,6 +93,7 @@ final class CommandServer extends CommandServiceImplBase {
             .addObject(new RemoteClientOptions())
             .addCommand("run_remote", cmdOptions)
             .build();
+    optionsParser.setExpandAtSign(false);
     try {
       optionsParser.parse(req.getCommandList().toArray(new String[]{}));
     } catch (ParameterException e) {

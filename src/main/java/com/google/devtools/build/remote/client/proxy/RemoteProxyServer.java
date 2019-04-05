@@ -51,7 +51,7 @@ public final class RemoteProxyServer {
             .addObject(remoteClientOptions)
             .addObject(authAndTlsOptions)
             .build();
-
+    optionsParser.setExpandAtSign(false);
     try {
       optionsParser.parse(args);
     } catch (ParameterException e) {
