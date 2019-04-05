@@ -1054,6 +1054,7 @@ public class RemoteClient {
             .addCommand("run_remote", runRemoteCommand)
             .addCommand("failed_actions", failedActionsCommand)
             .build();
+    optionsParser.setExpandAtSign(false);
 
     try {
       optionsParser.parse(args);
