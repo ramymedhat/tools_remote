@@ -165,11 +165,14 @@ int ComputeInputs(int argc, char** argv, const char** env, const string& cwd, co
     return 1;
   }
   const char* input_arg = argv[2] + 8;
+  bool is_as = false;
   for (const auto& input : absl::StrSplit(input_arg, ',', absl::SkipEmpty())) {
     inputs_from_args.insert(string(input));
+    if (absl::EndsWith(input, ".S") ||  absl::EndsWith(input, ".s")) {
+      is_as = true;
+    }
   }
   bool next_is_input = false;
-  bool is_as = false;
   *is_compile = false;
   set<string> cc_input_args({"-I", "-c", "-isystem", "-quote"});
   vector<string> input_prefixes({"-L", "--gcc_toolchain"});
@@ -187,9 +190,10 @@ int ComputeInputs(int argc, char** argv, const char** env, const string& cwd, co
       }
     }
     if (!strcmp(argv[i], "-D__ASSEMBLY__")) {
-      is_as = true;
+        is_as = true;
     }
   }
+  bool use_args_inputs = false;
   if (*is_compile) {
     int proc_res = GetInputsFromIncludeProcessor(cmd_id, argc, argv, env, cwd, inputs);
     if (proc_res != 0) {
@@ -200,8 +204,39 @@ int ComputeInputs(int argc, char** argv, const char** env, const string& cwd, co
       // Fall back on computing from the command, but warn.
       cerr << cmd_id << "> Include processor did not return results, computing from args\n";
     }
+  } else if (string(argv[4]).find("header-abi-dumper") != std::string::npos) {
+    use_args_inputs = true;
+    *is_compile = true;
+    char **new_argv = (char**)malloc((argc+1) * sizeof *new_argv);
+    bool is_c = false;
+    for (const string& inp: inputs_from_args) {
+      if (inp.compare(inp.length() - 2, 2, string(".c")) == 0) {
+        is_c = true;
+      }
+    }
+    for(int i = 0; i < argc; ++i) {
+        string arg = string(argv[i]);
+        if (i==4) {
+          // Only Android @ head has header-abi-dumper, which uses
+          // clang-r349610.
+          arg = (is_c) ? "prebuilts/clang/host/linux-x86/clang-r349610/bin/clang" : "prebuilts/clang/host/linux-x86/clang-r349610/bin/clang++";
+        }
+        size_t length = arg.length()+1;
+        new_argv[i] = (char*)malloc(length);
+        memcpy(new_argv[i], arg.c_str(), length);
+    }
+    new_argv[argc] = 0;
+    int proc_res = GetInputsFromIncludeProcessor(cmd_id, argc, new_argv, env, cwd, inputs);
+    if (proc_res != 0) {
+      return proc_res;
+    }
+    if (inputs->empty()) {
+      // We successfully called the include processor, but it returned no values.
+      // Fall back on computing from the command, but warn.
+      cerr << cmd_id << "> Include processor did not return results, computing from args\n";
+    }
   }
-  if (inputs->empty()) {
+  if (inputs->empty() || use_args_inputs) {
     inputs->insert(inputs_from_args.begin(), inputs_from_args.end());
   }
   // Common inputs:
