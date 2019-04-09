@@ -4,6 +4,8 @@
 #include <unistd.h>
 #include <cstdlib>
 #include <cstring>
+#include <fstream>
+#include <streambuf>
 #include <stdlib.h>
 
 #include <grpc/grpc.h>
@@ -29,6 +31,7 @@
 #include "src/main/proto/include_processor.grpc.pb.h"
 
 #define INCLUDE_PROCESSOR_PROXY_FAILURE 44
+#define FILE_ARG_PREFIX "file:"
 
 namespace remote_client {
 
@@ -48,6 +51,8 @@ using std::getenv;
 using std::set;
 using std::string;
 using std::vector;
+using std::ifstream;
+using std::istreambuf_iterator;
 
 bool PathExists(const string& s, bool *is_directory) {
   struct stat st;
@@ -157,6 +162,36 @@ int GetInputsFromIncludeProcessor(const string& cmd_id, int argc, char** argv, c
   return 0;
 }
 
+
+string readFile(const std::string& fileName) {
+  ifstream fileStream(fileName.c_str());
+  return string((istreambuf_iterator<char>(fileStream)),
+            istreambuf_iterator<char>());
+}
+
+bool isFileArg(const std::string& str) {
+  if (str.substr(0, 5) == FILE_ARG_PREFIX) {
+    return true;
+  }
+  return false;
+}
+
+void expandFileArguments(set<string>* args) {
+  set<string> argsFromFileContents;
+
+  for (const auto& arg : *args) {
+    if (isFileArg(arg)) {
+      const std::string& fileName = arg.substr(5);
+      const std::string& fileContents = readFile(fileName);
+      for (const auto& argFromFile : absl::StrSplit(fileContents, ',', absl::SkipEmpty())) {
+        argsFromFileContents.insert(string(argFromFile));
+      }
+    }
+  }
+
+  args->insert(argsFromFileContents.begin(), argsFromFileContents.end());
+}
+
 int ComputeInputs(int argc, char** argv, const char** env, const string& cwd, const string& cmd_id,
                   bool *is_compile, set<string>* inputs) {
   set<string> inputs_from_args;
@@ -215,6 +250,11 @@ int ComputeInputs(int argc, char** argv, const char** env, const string& cwd, co
   if (is_compile) {
     inputs->insert(argv[argc-1]);  // For Android compile commands, the compiled file is last.
   } // Linker commands need special treatment as well.
+
+  // Expand file:<filename> args into the contents of the file itself.
+  // This is done so that large inputs exceeding 120KB in size can be passed in as files
+  // rather than as direct inputs to rbecc invocation.
+  expandFileArguments(inputs);
   return 0;
 }
 
