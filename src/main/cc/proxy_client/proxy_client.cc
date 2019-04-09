@@ -31,7 +31,6 @@
 #include "src/main/proto/include_processor.grpc.pb.h"
 
 #define INCLUDE_PROCESSOR_PROXY_FAILURE 44
-#define FILE_ARG_PREFIX "file:"
 
 namespace remote_client {
 
@@ -53,6 +52,8 @@ using std::string;
 using std::vector;
 using std::ifstream;
 using std::istreambuf_iterator;
+
+const char* kFileArgPrefix = "file:";
 
 bool PathExists(const string& s, bool *is_directory) {
   struct stat st;
@@ -163,26 +164,33 @@ int GetInputsFromIncludeProcessor(const string& cmd_id, int argc, char** argv, c
 }
 
 
-string readFile(const std::string& fileName) {
+string ReadFile(const std::string& fileName) {
   ifstream fileStream(fileName.c_str());
   return string((istreambuf_iterator<char>(fileStream)),
             istreambuf_iterator<char>());
 }
 
-bool isFileArg(const std::string& str) {
-  if (str.substr(0, 5) == FILE_ARG_PREFIX) {
+bool IsFileArg(const std::string& str) {
+  if (str.substr(0, 5) == kFileArgPrefix) {
     return true;
   }
   return false;
 }
 
-void expandFileArguments(set<string>* args) {
+// ExpandFileArguments goes through the set of args given as input, and for any arg
+// that contains a "file:<absolute-file-path>" syntax, reads the file pointed to by the
+// absolute-file-path and insert the arguments specified by it into the given set of args.
+//
+// The file contents is expected to be a comma separated list of arguments. For example,
+// the following is a valid file:
+// foo/bar/a.java,bar/foo/b.h,bar/foo/b.cpp
+void ExpandFileArguments(set<string>* args) {
   set<string> argsFromFileContents;
 
   for (const auto& arg : *args) {
-    if (isFileArg(arg)) {
+    if (IsFileArg(arg)) {
       const std::string& fileName = arg.substr(5);
-      const std::string& fileContents = readFile(fileName);
+      const std::string& fileContents = ReadFile(fileName);
       for (const auto& argFromFile : absl::StrSplit(fileContents, ',', absl::SkipEmpty())) {
         argsFromFileContents.insert(string(argFromFile));
       }
@@ -206,7 +214,7 @@ int ComputeInputs(int argc, char** argv, const char** env, const string& cwd, co
   // Expand file:<filename> args into the contents of the file itself.
   // This is done so that large inputs exceeding 120KB in size can be passed in as files
   // rather than as direct inputs to rbecc invocation.
-  expandFileArguments(&inputs_from_args);
+  ExpandFileArguments(&inputs_from_args);
 
   bool next_is_input = false;
   bool is_as = false;
