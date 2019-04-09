@@ -203,6 +203,11 @@ int ComputeInputs(int argc, char** argv, const char** env, const string& cwd, co
   for (const auto& input : absl::StrSplit(input_arg, ',', absl::SkipEmpty())) {
     inputs_from_args.insert(string(input));
   }
+  // Expand file:<filename> args into the contents of the file itself.
+  // This is done so that large inputs exceeding 120KB in size can be passed in as files
+  // rather than as direct inputs to rbecc invocation.
+  expandFileArguments(&inputs_from_args);
+
   bool next_is_input = false;
   bool is_as = false;
   *is_compile = false;
@@ -251,10 +256,6 @@ int ComputeInputs(int argc, char** argv, const char** env, const string& cwd, co
     inputs->insert(argv[argc-1]);  // For Android compile commands, the compiled file is last.
   } // Linker commands need special treatment as well.
 
-  // Expand file:<filename> args into the contents of the file itself.
-  // This is done so that large inputs exceeding 120KB in size can be passed in as files
-  // rather than as direct inputs to rbecc invocation.
-  expandFileArguments(inputs);
   return 0;
 }
 
