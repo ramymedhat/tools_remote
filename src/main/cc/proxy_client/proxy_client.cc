@@ -4,6 +4,8 @@
 #include <unistd.h>
 #include <cstdlib>
 #include <cstring>
+#include <fstream>
+#include <streambuf>
 #include <stdlib.h>
 
 #include <grpc/grpc.h>
@@ -48,6 +50,10 @@ using std::getenv;
 using std::set;
 using std::string;
 using std::vector;
+using std::ifstream;
+using std::istreambuf_iterator;
+
+const char* kFileArgPrefix = "file:";
 
 bool PathExists(const string& s, bool *is_directory) {
   struct stat st;
@@ -157,6 +163,43 @@ int GetInputsFromIncludeProcessor(const string& cmd_id, int argc, char** argv, c
   return 0;
 }
 
+
+string ReadFile(const std::string& fileName) {
+  ifstream fileStream(fileName.c_str());
+  return string((istreambuf_iterator<char>(fileStream)),
+            istreambuf_iterator<char>());
+}
+
+bool IsFileArg(const std::string& str) {
+  if (str.substr(0, 5) == kFileArgPrefix) {
+    return true;
+  }
+  return false;
+}
+
+// ExpandFileArguments goes through the set of args given as input, and for any arg
+// that contains a "file:<absolute-file-path>" syntax, reads the file pointed to by the
+// absolute-file-path and insert the arguments specified by it into the given set of args.
+//
+// The file contents is expected to be a comma separated list of arguments. For example,
+// the following is a valid file:
+// foo/bar/a.java,bar/foo/b.h,bar/foo/b.cpp
+void ExpandFileArguments(set<string>* args) {
+  set<string> argsFromFileContents;
+
+  for (const auto& arg : *args) {
+    if (IsFileArg(arg)) {
+      const std::string& fileName = arg.substr(5);
+      const std::string& fileContents = ReadFile(fileName);
+      for (const auto& argFromFile : absl::StrSplit(fileContents, ',', absl::SkipEmpty())) {
+        argsFromFileContents.insert(string(argFromFile));
+      }
+    }
+  }
+
+  args->insert(argsFromFileContents.begin(), argsFromFileContents.end());
+}
+
 int ComputeInputs(int argc, char** argv, const char** env, const string& cwd, const string& cmd_id,
                   bool *is_compile, set<string>* inputs) {
   set<string> inputs_from_args;
@@ -168,6 +211,11 @@ int ComputeInputs(int argc, char** argv, const char** env, const string& cwd, co
   for (const auto& input : absl::StrSplit(input_arg, ',', absl::SkipEmpty())) {
     inputs_from_args.insert(string(input));
   }
+  // Expand file:<filename> args into the contents of the file itself.
+  // This is done so that large inputs exceeding 120KB in size can be passed in as files
+  // rather than as direct inputs to rbecc invocation.
+  ExpandFileArguments(&inputs_from_args);
+
   bool next_is_input = false;
   bool is_as = false;
   *is_compile = false;
@@ -215,6 +263,7 @@ int ComputeInputs(int argc, char** argv, const char** env, const string& cwd, co
   if (is_compile) {
     inputs->insert(argv[argc-1]);  // For Android compile commands, the compiled file is last.
   } // Linker commands need special treatment as well.
+
   return 0;
 }
 
