@@ -165,11 +165,14 @@ int ComputeInputs(int argc, char** argv, const char** env, const string& cwd, co
     return 1;
   }
   const char* input_arg = argv[2] + 8;
+  bool is_assembler = false;
   for (const auto& input : absl::StrSplit(input_arg, ',', absl::SkipEmpty())) {
     inputs_from_args.insert(string(input));
+    if (absl::EndsWith(input, ".S") ||  absl::EndsWith(input, ".s")) {
+      is_assembler = true;
+    }
   }
   bool next_is_input = false;
-  bool is_as = false;
   *is_compile = false;
   set<string> cc_input_args({"-I", "-c", "-isystem", "-quote"});
   vector<string> input_prefixes({"-L", "--gcc_toolchain"});
@@ -187,11 +190,43 @@ int ComputeInputs(int argc, char** argv, const char** env, const string& cwd, co
       }
     }
     if (!strcmp(argv[i], "-D__ASSEMBLY__")) {
-      is_as = true;
+        is_assembler = true;
     }
   }
+  bool use_args_inputs = false;
   if (*is_compile) {
     int proc_res = GetInputsFromIncludeProcessor(cmd_id, argc, argv, env, cwd, inputs);
+    if (proc_res != 0) {
+      return proc_res;
+    }
+    if (inputs->empty()) {
+      use_args_inputs = true;
+      // We successfully called the include processor, but it returned no values.
+      // Fall back on computing from the command, but warn.
+      cerr << cmd_id << "> Include processor did not return results, computing from args\n";
+    }
+  } else if (string(argv[4]).find("header-abi-dumper") != std::string::npos) {
+    use_args_inputs = true;
+    *is_compile = true;
+    vector<const char *> new_argv;
+    new_argv.reserve(argc);
+    bool is_c = false;
+    for (const string& inp: inputs_from_args) {
+      if (inp.compare(inp.length() - 2, 2, string(".c")) == 0) {
+        is_c = true;
+      }
+    }
+    for(int i = 0; i < argc; ++i) {
+        string arg(argv[i]);
+        if (i==4) {
+          // Only Android @ head has header-abi-dumper, which uses
+          // clang-r349610.
+          arg = (is_c) ? "prebuilts/clang/host/linux-x86/clang-r349610/bin/clang" : "prebuilts/clang/host/linux-x86/clang-r349610/bin/clang++";
+        }
+        new_argv.emplace_back(arg.c_str());
+    }
+    new_argv.emplace_back(nullptr);
+    int proc_res = GetInputsFromIncludeProcessor(cmd_id, argc, const_cast<char**>(new_argv.data()), env, cwd, inputs);
     if (proc_res != 0) {
       return proc_res;
     }
@@ -201,14 +236,14 @@ int ComputeInputs(int argc, char** argv, const char** env, const string& cwd, co
       cerr << cmd_id << "> Include processor did not return results, computing from args\n";
     }
   }
-  if (inputs->empty()) {
+  if (use_args_inputs) {
     inputs->insert(inputs_from_args.begin(), inputs_from_args.end());
   }
   // Common inputs:
   inputs->insert("build");  // Needed for Android 9?
   inputs->insert("toolchain");
   inputs->insert(GetCompilerDir(argv[4]));  // For both compile and link commands?
-  if (is_as) {
+  if (is_assembler) {
     // Horrible hack for Android 7 assembly actions.
     inputs->insert("prebuilts/gcc/linux-x86/arm/arm-linux-androideabi-4.9/arm-linux-androideabi/bin/as");
   }
