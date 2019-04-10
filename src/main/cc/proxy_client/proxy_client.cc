@@ -208,7 +208,7 @@ int ComputeInputs(int argc, char** argv, const char** env, const string& cwd, co
   } else if (string(argv[4]).find("header-abi-dumper") != std::string::npos) {
     use_args_inputs = true;
     *is_compile = true;
-    vector<const char *> new_argv;
+    vector<const char*> new_argv;
     new_argv.reserve(argc);
     bool is_c = false;
     for (const string& inp: inputs_from_args) {
@@ -217,16 +217,19 @@ int ComputeInputs(int argc, char** argv, const char** env, const string& cwd, co
       }
     }
     for(int i = 0; i < argc; ++i) {
-        string arg(argv[i]);
         if (i==4) {
           // Only Android @ head has header-abi-dumper, which uses
           // clang-r349610.
-          arg = (is_c) ? "prebuilts/clang/host/linux-x86/clang-r349610/bin/clang" : "prebuilts/clang/host/linux-x86/clang-r349610/bin/clang++";
+          if (is_c)
+            new_argv.emplace_back("prebuilts/clang/host/linux-x86/clang-r349610/bin/clang");
+          else
+            new_argv.emplace_back("prebuilts/clang/host/linux-x86/clang-r349610/bin/clang++");
+        } else {
+          new_argv.emplace_back(argv[i]);
         }
-        new_argv.emplace_back(arg.c_str());
     }
     new_argv.emplace_back(nullptr);
-    int proc_res = GetInputsFromIncludeProcessor(cmd_id, argc, const_cast<char**>(new_argv.data()), env, cwd, inputs);
+    int proc_res = GetInputsFromIncludeProcessor(cmd_id, argc, const_cast<char**>(&new_argv[0]), env, cwd, inputs);
     if (proc_res != 0) {
       return proc_res;
     }
