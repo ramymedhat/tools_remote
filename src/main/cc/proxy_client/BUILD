@@ -1,7 +1,13 @@
 cc_library(
     name = "proxy_client_lib",
-    srcs = ["proxy_client.cc"],
-    hdrs = ["proxy_client.h"],
+    srcs = [
+        "proxy_client.cc",
+        "javac_remote_actions.cc",
+    ],
+    hdrs = [
+        "proxy_client.h",
+        "javac_remote_actions.h",
+    ],
     deps = [
         "//external:grpc++",
         "//src/main/cc/ipc:goma_ipc_lib",

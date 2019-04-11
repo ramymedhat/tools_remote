@@ -25,6 +25,7 @@
 #include "absl/strings/str_join.h"
 #include "absl/strings/str_split.h"
 #include "src/main/cc/ipc/goma_ipc.h"
+#include "src/main/cc/proxy_client/javac_remote_actions.h"
 #include "src/main/proto/command_server.grpc.pb.h"
 #include "src/main/proto/command_server.pb.h"
 #include "src/main/proto/include_processor.pb.h"
@@ -201,7 +202,7 @@ void ExpandFileArguments(set<string>* args) {
 }
 
 int ComputeInputs(int argc, char** argv, const char** env, const string& cwd, const string& cmd_id,
-                  bool *is_compile, set<string>* inputs) {
+                  bool *is_compile, bool* is_javac, set<string>* inputs) {
   set<string> inputs_from_args;
   if (!absl::StartsWith(argv[2], "-inputs:")) {
     cerr << "Missing -inputs\n";
@@ -241,7 +242,10 @@ int ComputeInputs(int argc, char** argv, const char** env, const string& cwd, co
         is_assembler = true;
     }
   }
+
   bool use_args_inputs = false;
+  *is_javac = IsJavacAction(argc, argv);
+  bool is_header_abi_dumper = string(argv[4]).find("header-abi-dumper") != std::string::npos;
   if (*is_compile) {
     int proc_res = GetInputsFromIncludeProcessor(cmd_id, argc, argv, env, cwd, inputs);
     if (proc_res != 0) {
@@ -253,7 +257,7 @@ int ComputeInputs(int argc, char** argv, const char** env, const string& cwd, co
       // Fall back on computing from the command, but warn.
       cerr << cmd_id << "> Include processor did not return results, computing from args\n";
     }
-  } else if (string(argv[4]).find("header-abi-dumper") != std::string::npos) {
+  } else if (is_header_abi_dumper) {
     use_args_inputs = true;
     *is_compile = true;
     vector<const char*> new_argv;
@@ -286,7 +290,11 @@ int ComputeInputs(int argc, char** argv, const char** env, const string& cwd, co
       // Fall back on computing from the command, but warn.
       cerr << cmd_id << "> Include processor did not return results, computing from args\n";
     }
+  } else if (*is_javac) {
+    use_args_inputs = true;
+    inputs->insert("prebuilts/jdk/jdk9/linux-x86");
   }
+
   if (use_args_inputs) {
     inputs->insert(inputs_from_args.begin(), inputs_from_args.end());
   }
@@ -306,7 +314,8 @@ int ComputeInputs(int argc, char** argv, const char** env, const string& cwd, co
 }
 
 int CreateRunRequest(int argc, char** argv, const char** env,
-                     const string& cmd_id, RunRequest* req, bool* is_compile) {
+                     const string& cmd_id, RunRequest* req,
+                     bool* is_compile, bool* is_javac) {
   req->Clear();
   req->add_command("run_remote");
   req->add_command("--name");
@@ -346,7 +355,7 @@ int CreateRunRequest(int argc, char** argv, const char** env,
     req->add_command(NormalizedRelativePath(cwd, output));
   }
   set<string> inputs;
-  int compute_input_res = ComputeInputs(argc, argv, env, cwd, cmd_id, is_compile, &inputs);
+  int compute_input_res = ComputeInputs(argc, argv, env, cwd, cmd_id, is_compile, is_javac, &inputs);
   if (compute_input_res != 0) {
     cerr << cmd_id << "> Failed to compute inputs\n";
     return compute_input_res;
@@ -487,12 +496,12 @@ int ExecuteCommand(int argc, char** argv, const char** env) {
   string cmd_id = absl::StrCat(std::hash<std::string>{}(local_cmd));
 
   RunRequest req;
-  bool is_compile;
-  int create_run_res = CreateRunRequest(argc, argv, env, cmd_id, &req, &is_compile);
+  bool is_compile, is_javac;
+  int create_run_res = CreateRunRequest(argc, argv, env, cmd_id, &req, &is_compile, &is_javac);
   if (create_run_res != 0) {
     return create_run_res;  // Failed to create request.
   }
-  if (!is_compile && !getenv("RUN_ALL_REMOTELY")) {
+  if (!is_compile && !is_javac && !getenv("RUN_ALL_REMOTELY")) {
     // Only run compile actions remotely for now.
     if (verbose) {
       cout << "Executing non-compile action locally: " << local_cmd << "\n";
@@ -557,8 +566,8 @@ int SelectAndRunCommand(int argc, char** argv, const char** env) {
     std::chrono::time_point<std::chrono::high_resolution_clock> start_time, end_time;
     start_time = std::chrono::high_resolution_clock::now();
     set<string> includes;
-    bool is_compile;
-    int result = ComputeInputs(argc, argv, env, GetCwd(), "cmd", &is_compile, &includes);
+    bool is_compile, is_javac;
+    int result = ComputeInputs(argc, argv, env, GetCwd(), "cmd", &is_compile, &is_javac, &includes);
     cout << "Computed inputs:\n";
     for (const string& i : includes) {
       cout << i << "\n";
