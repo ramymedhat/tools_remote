@@ -292,7 +292,6 @@ int ComputeInputs(int argc, char** argv, const char** env, const string& cwd, co
     }
   } else if (*is_javac) {
     use_args_inputs = true;
-    DetermineJavacActionInputs(argc, argv, inputs);
     inputs->insert("prebuilts/jdk/jdk9/linux-x86");
   }
 
