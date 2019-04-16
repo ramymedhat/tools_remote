@@ -317,6 +317,11 @@ public class RemoteRunner {
     Utils.vlog(
         remoteOptions.verbosity, 2, "%s> Build request ID: %s", name, options.buildRequestId);
     Utils.vlog(remoteOptions.verbosity, 2, "%s> Invocation ID: %s", name, options.invocationId);
+    if (options.saveExecutionData) {
+      // Instead of injecting options downstream, create an empty ExecutionData to indicate we
+      // want to save this. TODO(olaola): reconsider this hack!
+      record.setExecutionData(ExecutionData.getDefaultInstance());
+    }
     TreeNode inputRoot;
     Command command;
     Action action;

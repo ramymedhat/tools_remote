@@ -185,6 +185,7 @@ message File {
 // Full data that can be used to debug cache misses.
 message ExecutionData {
   repeated File input_files = 1;
+  repeated string input_file_cas_misses = 5;
   repeated File output_files = 2;
   build.bazel.remote.execution.v2.Digest command_digest = 3;
   build.bazel.remote.execution.v2.Digest action_digest = 4;

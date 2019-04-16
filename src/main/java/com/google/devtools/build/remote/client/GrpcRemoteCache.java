@@ -45,6 +45,7 @@ import com.google.common.hash.HashingOutputStream;
 import com.google.common.util.concurrent.Futures;
 import com.google.common.util.concurrent.ListenableFuture;
 import com.google.common.util.concurrent.SettableFuture;
+import com.google.devtools.build.lib.remote.proxy.ExecutionData;
 import com.google.devtools.build.lib.remote.proxy.RunRecord;
 import com.google.devtools.build.remote.client.TreeNodeRepository.TreeNode;
 import com.google.devtools.build.remote.client.util.DigestUtil;
@@ -347,6 +348,16 @@ public class GrpcRemoteCache extends AbstractRemoteActionCache {
         Digest digest = entry.getKey();
         File file = entry.getValue();
         toUpload.add(Chunker.builder(digestUtil).setInput(digest, file).build());
+        Utils.vlog(
+            options.verbosity,
+            3,
+            "%s> CAS cache file miss: %s",
+            record.getCommandParameters().getName(),
+            file.toString());
+        if (record.hasExecutionData()) {
+          ExecutionData.Builder execData = record.getExecutionDataBuilder();
+          execData.addInputFileCasMisses(file.toString());
+        }
       }
     }
     uploader.uploadBlobs(toUpload, true, record);
