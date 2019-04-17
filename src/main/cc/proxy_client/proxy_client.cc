@@ -53,6 +53,7 @@ using std::string;
 using std::vector;
 using std::ifstream;
 using std::istreambuf_iterator;
+using std::max;
 
 const char* kFileArgPrefix = "file:";
 
@@ -84,12 +85,44 @@ string NormalizedRelativePath(const string& cwd, const string& path) {
       continue;
     }
     if (*iter == "..") {
-      iter = segments.erase(iter - 1, iter + 1);
+      // If the previous segment has any one of the following characters,
+      // don't erase the whole previous segment but instead erase only the
+      // relevant portions of the previous segment.
+      auto prev_iter = iter - 1;
+      const int single_quote_pos = prev_iter->find_last_of("'");
+      const int space_pos = prev_iter->find_last_of(" ");
+      const int double_quote_pos = prev_iter->find_last_of("\"");
+
+      const int last_valid_char_pos = max(space_pos, max(double_quote_pos, single_quote_pos));
+      if (last_valid_char_pos >= 0) {
+        prev_iter->erase(last_valid_char_pos + 1);
+        iter = segments.erase(iter, iter + 1);
+      } else {
+        iter = segments.erase(iter - 1, iter + 1);
+      }
       continue;
     }
     ++iter;
   }
-  return absl::StrJoin(segments.begin(), segments.end(), "/");
+
+  string res;
+  res.reserve(path.length());
+
+  for (auto iter = segments.begin(); iter != segments.end(); ++iter) {
+    res += *iter;
+    if (iter->length() == 0) {
+      continue;
+    }
+
+    const char last_char = iter->at(iter->length() - 1);
+    if (last_char != ' ' &&
+        last_char != '\'' &&
+        last_char != '"' &&
+        iter != segments.end() - 1) {
+      res += '/';
+    }
+  }
+  return res;
 }
 
 string RelativeToAbsolutePath(const string& cwd, const char* path) {
