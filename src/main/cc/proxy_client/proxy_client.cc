@@ -293,6 +293,8 @@ int ComputeInputs(int argc, char** argv, const char** env, const string& cwd, co
   } else if (*is_javac) {
     use_args_inputs = true;
     inputs->insert("prebuilts/jdk/jdk9/linux-x86");
+    inputs->insert("external/icu");
+    FindAllFilesFromCommand(argc, argv, inputs);
   }
 
   if (use_args_inputs) {
@@ -363,8 +365,8 @@ int CreateRunRequest(int argc, char** argv, const char** env,
   if (!inputs.empty()) {
     req->add_command("--inputs");
   }
-  bool allow_outputs_under_inputs = getenv("ALLOW_OUTPUTS_UNDER_INPUTS") != nullptr;
-  bool allow_output_directories_as_inputs = getenv("ALLOW_OUTPUT_DIRECTORIES_AS_INPUTS") != nullptr;
+  bool allow_outputs_under_inputs = *is_javac || getenv("ALLOW_OUTPUTS_UNDER_INPUTS") != nullptr;
+  bool allow_output_directories_as_inputs = *is_javac || getenv("ALLOW_OUTPUT_DIRECTORIES_AS_INPUTS") != nullptr;
   for (const auto& input : inputs) {
     string inp = NormalizedRelativePath(cwd, input);
     bool is_directory = false;
