@@ -946,8 +946,7 @@ public class RemoteClient {
     System.out.println("Record with id " + options.commandId + " was not found.");
   }
 
-  private void doProxyStats(ProxyStatsCommand options) {
-    Preconditions.checkNotNull(proxyStubs, "--proxy should be set");
+  private void doProxyStats(ProxyStatsCommand options) throws IOException {
     StatsRequest.Builder req =
         StatsRequest.newBuilder()
             .setFull(options.full || proxyStubs.size() > 1)
@@ -960,28 +959,43 @@ public class RemoteClient {
     if (options.toTs > 0) {
       req.setToTs(Timestamp.newBuilder().setSeconds(options.toTs));
     }
+    if (options.proxyStatsFile != null) {
+      StatsResponse.Builder builder = StatsResponse.newBuilder();
+      try (FileInputStream fin = new FileInputStream(options.proxyStatsFile)) {
+        TextFormat.getParser().merge(new InputStreamReader(fin), builder);
+      }
+      StatsResponse.Builder aggr = StatsResponse.newBuilder();
+      List<RunRecord.Builder> records = builder.build().getRunRecordsList().stream()
+          .map(RunRecord::toBuilder)
+          .sorted((r1, r2) ->
+              r1.getCommandParameters().getName().compareTo(r2.getCommandParameters().getName()))
+          .collect(Collectors.toList());
+      aggr.setProxyStats(Stats.computeStats(req.build(), records));
+      aggr.addAllRunRecords(builder.build().getRunRecordsList());
+      System.out.println(aggr.toString());
+      return;
+    }
+    Preconditions.checkNotNull(proxyStubs, "--proxy should be set");
     StatsResponse.Builder aggr = StatsResponse.newBuilder();
     List<RunRecord.Builder> records = new ArrayList<>();
     for (CommandServiceBlockingStub proxyStub : proxyStubs) {
       Iterator<StatsResponse> replies = proxyStub.stats(req.build());
       while (replies.hasNext()) {
         StatsResponse resp = replies.next();
-        if (proxyStubs.size() == 1) {
-          System.out.println(resp.toString());
-        }
         records.addAll(
             resp.getRunRecordsList().stream()
                 .map(RunRecord::toBuilder)
                 .collect(Collectors.toList()));
-        if (options.full) {
-          aggr.addAllRunRecords(resp.getRunRecordsList());
-        }
       }
     }
-    if (proxyStubs.size() > 1) {
-      aggr.setProxyStats(Stats.computeStats(req.build(), records));
-      System.out.println(aggr.toString());
+    if (options.full) {
+      records.sort((r1, r2) ->
+          r1.getCommandParameters().getName().compareTo(r2.getCommandParameters().getName()));
+      aggr.addAllRunRecords(
+          records.stream().map(RunRecord.Builder::build).collect(Collectors.toList()));
     }
+    aggr.setProxyStats(Stats.computeStats(req.build(), records));
+    System.out.println(aggr.toString());
   }
 
   private void doRunRemote(RunRemoteCommand options, String... args) {
