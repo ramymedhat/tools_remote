@@ -456,8 +456,8 @@ int CreateRunRequest(int argc, char** argv, const char** env,
   if (!inputs.empty()) {
     req->add_command("--inputs");
   }
-  bool allow_outputs_under_inputs = getenv("RUN_ALL_REMOTELY") || *is_javac || getenv("ALLOW_OUTPUTS_UNDER_INPUTS") != nullptr;
-  bool allow_output_directories_as_inputs = getenv("RUN_ALL_REMOTELY") || *is_javac || getenv("ALLOW_OUTPUT_DIRECTORIES_AS_INPUTS") != nullptr;
+  bool allow_outputs_under_inputs = *is_javac || getenv("ALLOW_OUTPUTS_UNDER_INPUTS") != nullptr;
+  bool allow_output_directories_as_inputs = *is_javac || getenv("ALLOW_OUTPUT_DIRECTORIES_AS_INPUTS") != nullptr;
   for (const auto& input : inputs) {
     string inp = NormalizedRelativePath(cwd, input);
     bool is_directory = false;
