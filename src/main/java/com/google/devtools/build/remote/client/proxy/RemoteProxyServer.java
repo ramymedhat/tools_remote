@@ -62,7 +62,7 @@ public final class RemoteProxyServer {
 
     RemoteClient client = new RemoteClient(remoteOptions, remoteClientOptions, authAndTlsOptions);
     Server server = NettyServerBuilder.forPort(proxyOptions.listenPort)
-        .maxMessageSize(10 * 1024 * 1024)
+        .maxMessageSize(100 * 1024 * 1024)
         .addService(new CommandServer(proxyOptions, client)).build();
     Utils.vlog(
         client.verbosity(),
