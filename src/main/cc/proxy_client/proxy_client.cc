@@ -514,8 +514,8 @@ int CreateRunRequest(int argc, char** argv, const char** env,
   req->add_command("--platform");
   req->add_command(
       "container-image=docker://gcr.io/foundry-x-experiments/"
-      "android-platform-client-environment@sha256:"
-      "796f79be0b316df94c435e697f30e00b8c6aba0741fa22c4975fdf87a089417b,"
+      "android-platform@sha256:"
+      "56e8072003914010c86702ef94634cdfde7089e4732ceac241d0fe4242957f90,"
       "jdk-version=10");
   return 0;
 }
