@@ -61,6 +61,7 @@ public final class GoogleAuthUtils {
     try {
       NettyChannelBuilder builder =
           NettyChannelBuilder.forTarget(target)
+              .maxMessageSize(100 * 1024 * 1024)
               .negotiationType(options.tlsEnabled ? NegotiationType.TLS : NegotiationType.PLAINTEXT)
               .loadBalancerFactory(RoundRobinLoadBalancerFactory.getInstance())
               .intercept(interceptors);

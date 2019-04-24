@@ -971,7 +971,9 @@ public class RemoteClient {
               r1.getCommandParameters().getName().compareTo(r2.getCommandParameters().getName()))
           .collect(Collectors.toList());
       aggr.setProxyStats(Stats.computeStats(req.build(), records));
-      aggr.addAllRunRecords(builder.build().getRunRecordsList());
+      if (options.full) {
+        aggr.addAllRunRecords(builder.build().getRunRecordsList());
+      }
       System.out.println(aggr.toString());
       return;
     }
@@ -986,6 +988,9 @@ public class RemoteClient {
             resp.getRunRecordsList().stream()
                 .map(RunRecord::toBuilder)
                 .collect(Collectors.toList()));
+        if (resp.hasProxyStats()) {
+          aggr.setProxyStats(resp.getProxyStats());
+        }
       }
     }
     if (options.full) {
@@ -994,7 +999,9 @@ public class RemoteClient {
       aggr.addAllRunRecords(
           records.stream().map(RunRecord.Builder::build).collect(Collectors.toList()));
     }
-    aggr.setProxyStats(Stats.computeStats(req.build(), records));
+    if (proxyStubs.size() > 1) {
+      aggr.setProxyStats(Stats.computeStats(req.build(), records));
+    }
     System.out.println(aggr.toString());
   }
 
