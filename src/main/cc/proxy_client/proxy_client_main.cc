@@ -1,5 +1,7 @@
 #include <iostream>
 
+#include "gflags/gflags.h"
+
 #include "src/main/cc/proxy_client/proxy_client.h"
 #include "src/main/proto/command_server.pb.h"
 

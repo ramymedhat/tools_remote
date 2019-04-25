@@ -24,6 +24,7 @@
 #include "absl/strings/str_cat.h"
 #include "absl/strings/str_join.h"
 #include "absl/strings/str_split.h"
+#include "gflags/gflags.h"
 #include "src/main/cc/ipc/goma_ipc.h"
 #include "src/main/cc/proxy_client/javac_remote_actions.h"
 #include "src/main/proto/command_server.grpc.pb.h"

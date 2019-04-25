@@ -10,6 +10,7 @@ cc_library(
     ],
     deps = [
         "//external:grpc++",
+        "//external:gflags",
         "//src/main/cc/ipc:goma_ipc_lib",
         "//src/main/proto:command_server_cc_proto",
         "//src/main/proto:include_processor_cc_proto",
