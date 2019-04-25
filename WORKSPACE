@@ -24,16 +24,17 @@ http_archive(
 # Needed for C++ gRPC.
 http_archive(
     name = "com_github_grpc_grpc",
+    sha256 = "34ed95b727e7c6fcbf85e5eb422e962788e21707b712fdb4caf931553c2c6dbc",
     strip_prefix = "grpc-1.17.2",
     urls = [
         "https://github.com/grpc/grpc/archive/v1.17.2.tar.gz",
         "https://mirror.bazel.build/github.com/grpc/grpc/archive/v1.17.2.tar.gz",
     ],
-    sha256 = "34ed95b727e7c6fcbf85e5eb422e962788e21707b712fdb4caf931553c2c6dbc",
 )
 
 # Pull in all gRPC dependencies.
 load("@com_github_grpc_grpc//bazel:grpc_deps.bzl", "grpc_deps")
+
 grpc_deps()
 
 bind(
@@ -48,9 +49,9 @@ bind(
 
 http_archive(
     name = "com_google_absl",
+    sha256 = "b98a0be864a1f934e955bcad239efc184b75313ba4bcb0556aeedba661dc4f41",
     strip_prefix = "abseil-cpp-256be563447a315f2a7993ec669460ba475fa86a",
     url = "https://github.com/abseil/abseil-cpp/archive/256be563447a315f2a7993ec669460ba475fa86a.zip",
-#    sha256 = "84b4277a9b56f9a192952beca535313497826c6ff2e38b2cac7351a3ed2ae780",
 )
 
 # Needed for @grpc_java//compiler:grpc_java_plugin.
@@ -72,18 +73,9 @@ http_archive(
 http_archive(
     name = "remoteapis",
     build_file = "@//:BUILD.remoteapis",
-#    sha256 = "6f22ba09356f8dbecb87ba03cacf147939f77fef1c9cfaffb3826691f3686e9b",
-    strip_prefix = "remote-apis-3e5d6da487df88c62be9aed0a8130f588f26b712",
-    url = "https://github.com/ola-rozenfeld/remote-apis/archive/3e5d6da487df88c62be9aed0a8130f588f26b712.zip",
+    strip_prefix = "remote-apis-9aabeb07c612ca755278468fc89ae9fa5d8be38a",
+    url = "https://github.com/bazelbuild/remote-apis/archive/9aabeb07c612ca755278468fc89ae9fa5d8be38a.zip",
 )
-
-#http_archive(
-#    name = "remoteapis",
-#    build_file = "@//:BUILD.remoteapis",
-#    sha256 = "6f22ba09356f8dbecb87ba03cacf147939f77fef1c9cfaffb3826691f3686e9b",
-#    strip_prefix = "remote-apis-cfe8e540cbb424e3ebc649ddcbc91190f70e23a6",
-#    url = "https://github.com/bazelbuild/remote-apis/archive/cfe8e540cbb424e3ebc649ddcbc91190f70e23a6.zip",
-#)
 
 # Bazel toolchains
 http_archive(
@@ -99,12 +91,12 @@ http_archive(
 # Needed for C++ proxy_client in-socket connection.
 http_archive(
     name = "zlib_archive",
+    build_file = "@//:BUILD.zlib",
+    sha256 = "c3e5e9fdd5004dcb542feda5ee4f0ff0744628baf8ed2dd5d66f8ca1197cb1a1",
+    strip_prefix = "zlib-1.2.11",
     urls = [
         "https://mirror.bazel.build/zlib.net/zlib-1.2.11.tar.gz",
     ],
-    sha256 = "c3e5e9fdd5004dcb542feda5ee4f0ff0744628baf8ed2dd5d66f8ca1197cb1a1",
-    strip_prefix = "zlib-1.2.11",
-    build_file = "@//:BUILD.zlib",
 )
 
 load("//3rdparty:workspace.bzl", "maven_dependencies", "jar_artifact_callback")

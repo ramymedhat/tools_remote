@@ -392,6 +392,13 @@ public final class RemoteClientOptions {
         description = "An action status to filter by.",
         converter = StatusConverter.class)
     public Status status = Status.UNKNOWN;
+
+    @Parameter(
+        names = {"--proxy_stats_file", "-i"},
+        converter = PathConverter.class,
+        description = "If specified, the stats will be parsed from a text file containing " +
+            "the output of a previous full --proxy_stats command.")
+    public File proxyStatsFile = null;
   }
 
   @Parameters(
