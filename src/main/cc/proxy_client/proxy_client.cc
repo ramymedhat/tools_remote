@@ -517,16 +517,7 @@ int CreateRunRequest(int argc, char** argv, const char** env,
     string varval(*env++);
     unsigned int eq_index = varval.find("=");
     string var = varval.substr(0, eq_index);
-    bool passPath = false;
-    if (getenv("ADDITONAL_ENV_VARS")) {
-      // TODO: support more vars if needed.
-      passPath = true;
-    }
-    // Do not pass empty environment variables for consistency with Python version.
-    if (var.find("PYTHON") == string::npos && eq_index != varval.length() - 1 &&
-        (var.find("ANDROID") != string::npos ||
-         var.find("TARGET") != string::npos || var == "PWD" ||
-         (var.find("PATH") != string::npos && passPath) || var.find("OUT") != string::npos))
+    if (var == "PWD")
       absl::StrAppend(&env_vars, varval, ",");
   }
   if (env_vars.length() > 1) {
