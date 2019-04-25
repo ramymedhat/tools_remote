@@ -701,7 +701,7 @@ int SelectAndRunCommand(int argc, char** argv, const char** env) {
   }
 
   cerr << "Unrecognized command " << argv[1]
-       << ", supported commands are \"run\", \"tmp_dir\", \"list_includes\"\n";
+       << ", supported commands are \"run\", \"tmp_dir\", \"list_includes\", \"include_stats\"\n";
   return 35;
 }
 
