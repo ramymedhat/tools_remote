@@ -197,6 +197,43 @@ public class TreeNodeRepositoryTest {
   }
 
   @Test
+  @SuppressWarnings("ReferenceEquality")
+  public void testDynamicDirectoryChildNoCache() throws Exception {
+    createFile("a/dir/foo");
+    Path aDirPath = execRoot.resolve("a");
+    File dir = execRoot.resolve("a/dir").toFile();
+
+    TreeNodeRepository repo = createTestTreeNodeRepository(ImmutableList.of(aDirPath));
+    TreeNode root = buildFromFiles(repo, dir);
+    TreeNode dirNode = root.getChildEntries().get(0).getChild().getChildEntries().get(0).getChild();
+    assertThat(dirNode.getChildEntries().size()).isEqualTo(1);
+
+    createFile("a/dir/bar");
+    TreeNode root1 = buildFromFiles(repo, dir);
+    assertThat(root).isNotEqualTo(root1); // stat a/dir again and find bar.
+    TreeNode dirNode1 =
+        root1.getChildEntries().get(0).getChild().getChildEntries().get(0).getChild();
+    assertThat(dirNode1.getChildEntries().size()).isEqualTo(2);
+  }
+
+  @Test
+  @SuppressWarnings("ReferenceEquality")
+  public void testDynamicDirectoryParentNoCache() throws Exception {
+    createFile("a/dir/foo");
+    Path aDirPath = execRoot.resolve("a/dir");
+    File dir = execRoot.resolve("a").toFile();
+
+    TreeNodeRepository repo = createTestTreeNodeRepository(ImmutableList.of(aDirPath));
+    TreeNode root = buildFromFiles(repo, dir);
+    assertThat(root.getChildEntries().get(0).getChild().getChildEntries().size()).isEqualTo(1);
+
+    createFile("a/bar");
+    TreeNode root1 = buildFromFiles(repo, dir);
+    assertThat(root).isNotEqualTo(root1); // stat a again and find bar.
+    assertThat(root1.getChildEntries().get(0).getChild().getChildEntries().size()).isEqualTo(2);
+  }
+
+  @Test
   public void testMerkleDigests() throws Exception {
     Files.createDirectories(execRoot.resolve("a"));
     File foo = createFile("a/foo", "1");
