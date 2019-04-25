@@ -142,6 +142,61 @@ string GetCompilerDir(const char* compiler) {
   return compiler_dir;
 }
 
+string Trim(const string& cmd) {
+  if (cmd.length() == 0) {
+    return "";
+  }
+
+  size_t st_idx = 0;
+  size_t ed_idx = cmd.length() - 1;
+
+  while (st_idx <= ed_idx && !absl::ascii_isalpha(cmd[st_idx])) ++st_idx;
+  while (ed_idx > st_idx && !absl::ascii_isalpha(cmd[ed_idx])) --ed_idx;
+
+  return cmd.substr(st_idx, ed_idx - st_idx + 1);
+}
+
+bool IsFile(const string& name) {
+  struct stat buffer;   
+  return stat(name.c_str(), &buffer) == 0;
+}
+
+void FindFiles(const string& cmd, set<string>* files) {
+  if (cmd.find(" ") != string::npos) {
+    for (const auto& c : absl::StrSplit(cmd, ' ', absl::SkipEmpty())) {
+      FindFiles(string(c), files);
+    }
+    return;
+  }
+  if (cmd.find(":") != string::npos) {
+    for (const auto& c : absl::StrSplit(cmd, ':', absl::SkipEmpty())) {
+      FindFiles(string(c), files);
+    }
+    return;
+  }
+
+  const string trimmed_cmd = Trim(cmd);
+  if (IsFile(trimmed_cmd)) {
+    files->insert(trimmed_cmd);
+  }
+}
+
+// FindAllFilesFromCommand splits each of the given args by space and colon,
+// checks if each individual piece of command is a file and if it is, appends
+// the file to the given set.
+// This is useful to find "hidden inputs" i.e., inputs not explicitly specified
+// to rbecc (from Ninja), but those that the command depends on for it to be
+// successfully remotely executed.
+void FindAllFilesFromCommand(int argc, char** argv, set<string>* files) {
+  if (files == nullptr) {
+    return;
+  }
+
+  for (int i = 0; i < argc; ++i) {
+    FindFiles(string(argv[i]), files);
+  }
+}
+
 int IncludeProcessorStats() {
   const char* server_address = getenv("INCLUDE_SERVER_ADDRESS");
   if (!server_address) {
@@ -350,6 +405,9 @@ int ComputeInputs(int argc, char** argv, const char** env, const string& cwd, co
     inputs->insert("prebuilts/jdk/jdk9/linux-x86");
     inputs->insert("external/icu");
     FindAllFilesFromCommand(argc, argv, inputs);
+  } else if (getenv("RUN_ALL_REMOTELY")) {
+    use_args_inputs = true;
+    FindAllFilesFromCommand(argc, argv, inputs);
   }
 
   if (use_args_inputs) {
@@ -478,8 +536,8 @@ int CreateRunRequest(int argc, char** argv, const char** env,
   req->add_command("--platform");
   req->add_command(
       "container-image=docker://gcr.io/foundry-x-experiments/"
-      "android-platform-client-environment@sha256:"
-      "796f79be0b316df94c435e697f30e00b8c6aba0741fa22c4975fdf87a089417b,"
+      "android-platform@sha256:"
+      "56e8072003914010c86702ef94634cdfde7089e4732ceac241d0fe4242957f90,"
       "jdk-version=10");
   return 0;
 }
@@ -644,7 +702,7 @@ int SelectAndRunCommand(int argc, char** argv, const char** env) {
   }
 
   cerr << "Unrecognized command " << argv[1]
-       << ", supported commands are \"run\", \"tmp_dir\", \"list_includes\"\n";
+       << ", supported commands are \"run\", \"tmp_dir\", \"list_includes\", \"include_stats\"\n";
   return 35;
 }
 
