@@ -51,16 +51,14 @@ DEFINE_int32(proxy_instances, 1, "Number of remote client proxy instances");
 DEFINE_string(proxy_address, "localhost:8080", "Address of the remote client proxy");
 DEFINE_int32(server_instances, 1, "Number of include processor server instances");
 DEFINE_string(server_address, "localhost:8070", "Address of the include processor server");
-DEFINE_string(command, "", "Type of command: run, list_includes, include_stats"
-            ", tmp_dir");
+DEFINE_string(command, "", "Type of command: run, list_includes, include_stats");
 DEFINE_string(inputs, "", "Comma-seperated list of input files/directories");
 DEFINE_string(outputs, "", "Comma-seperated list of output files");
 DEFINE_string(env_whitelist, "", "Comma-seperated list of environment variables to "
               "pass-through to the remote environment");
 
 static bool IsValidCommand(const char *flagname, const std::string &value) {
-  return value == "run" || value == "list_includes" || value == "include_stats"
-      || value == "tmp_dir";
+  return value == "run" || value == "list_includes" || value == "include_stats";
 }
 DEFINE_validator(command, &IsValidCommand);
 
@@ -259,7 +257,7 @@ int GetInputsFromIncludeProcessor(const string& cmd_id, int argc, char** argv, c
   ProcessIncludesRequest req;
   req.set_command_id(cmd_id);
   req.set_cwd(GetCwd());
-  for (int i = 1; i < argc; ++i) {
+  for (int i = 0; i < argc; ++i) {
     req.add_args(argv[i]);
   }
   while (*env) {
@@ -350,7 +348,7 @@ int ComputeInputs(int argc, char** argv, const char** env, const string& cwd, co
   *is_compile = false;
   set<string> cc_input_args({"-I", "-c", "-isystem", "-quote"});
   vector<string> input_prefixes({"-L", "--gcc_toolchain"});
-  for (int i = 1; i < argc; ++i) {
+  for (int i = 0; i < argc; ++i) {
     if (next_is_input) {
       inputs_from_args.insert(argv[i]);
     }
@@ -431,7 +429,7 @@ int ComputeInputs(int argc, char** argv, const char** env, const string& cwd, co
   // Common inputs:
   inputs->insert("build");  // Needed for Android 9?
   inputs->insert("toolchain");
-  inputs->insert(GetCompilerDir(argv[1]));  // For both compile and link commands?
+  inputs->insert(GetCompilerDir(argv[0]));  // For both compile and link commands?
   if (is_assembler) {
     // Horrible hack for Android 7 assembly actions.
     inputs->insert("prebuilts/gcc/linux-x86/arm/arm-linux-androideabi-4.9/arm-linux-androideabi/bin/as");
@@ -508,7 +506,7 @@ int CreateRunRequest(int argc, char** argv, const char** env,
     req->add_command(inp);
   }
   req->add_command("--command");
-  for (int i = 1; i < argc; ++i) {
+  for (int i = 0; i < argc; ++i) {
     req->add_command(NormalizedRelativePath(cwd, string(argv[i])));
   }
   req->add_command("--ignore_inputs");
@@ -595,7 +593,7 @@ int ExecuteCommand(int argc, char** argv, const char** env) {
   // Build local command arguments.
   vector<const char*> args;
   args.reserve(argc);
-  for (int i = 1; i < argc; ++i) {
+  for (int i = 0; i < argc; ++i) {
     args.emplace_back(argv[i]);
   }
   args.emplace_back(nullptr);
@@ -665,7 +663,7 @@ int SelectAndRunCommand(int argc, char** argv, const char** env) {
               " [--arg=val] --command=run -- [full command]\n";
          return 1;
       }
-      return ExecuteCommand(argc-sep_idx, &argv[sep_idx], env);
+      return ExecuteCommand(argc-sep_idx-1, &argv[sep_idx+1], env);
   } else if (FLAGS_command == "include_stats") {
     return IncludeProcessorStats();
   } else if (FLAGS_command == "list_includes") {
@@ -682,21 +680,8 @@ int SelectAndRunCommand(int argc, char** argv, const char** env) {
     std::chrono::duration<double> time = end_time - start_time;
     cerr << "Time: " << time.count() * 1000 << " msec\n";
     return result;
-  } else if (FLAGS_command == "tmp_dir") {
-    // Hack to allow goma_ctl ensure_start to work. This is called by
-    // the Android @head build when USE_GOMA is set.
-    const char *tmp_dir = "/tmp/goma_tmp";
-    mkdir(tmp_dir, 0777);
-    cout << tmp_dir << "\n";
-    return 0;
   }
 
-  if (!strcmp(argv[1], "run")) {
-    return ExecuteCommand(argc, argv, env);
-  }
-
-  cerr << "Unrecognized command " << argv[1]
-       << ", supported commands are \"run\", \"tmp_dir\", \"list_includes\", \"include_stats\"\n";
   return 35;
 }
 
