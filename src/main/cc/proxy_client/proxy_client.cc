@@ -49,8 +49,8 @@ DEFINE_string(invocation_id, "", "Invocation ID of the build");
 DEFINE_int32(retry_count, 1, "Number of remote retries to attempt");
 DEFINE_int32(proxy_instances, 1, "Number of remote client proxy instances");
 DEFINE_string(proxy_address, "localhost:8080", "Address of the remote client proxy");
-DEFINE_int32(server_instances, 1, "Number of include processor server instances");
-DEFINE_string(server_address, "localhost:8070", "Address of the include processor server");
+DEFINE_int32(include_processor_server_instances, 1, "Number of include processor server instances");
+DEFINE_string(include_processor_server_address, "localhost:8070", "Address of the include processor server");
 DEFINE_string(command, "", "Type of command: run, list_includes, include_stats");
 DEFINE_string(inputs, "", "Comma-seperated list of input files/directories");
 DEFINE_string(outputs, "", "Comma-seperated list of output files");
@@ -85,6 +85,7 @@ using std::istreambuf_iterator;
 using std::max;
 
 const char* kFileArgPrefix = "file:";
+const string kPWDOverride = "/proc/self/cwd";
 
 bool PathExists(const string& s, bool *is_directory) {
   struct stat st;
@@ -227,7 +228,7 @@ void FindAllFilesFromCommand(int argc, char** argv, set<string>* files) {
 
 int IncludeProcessorStats() {
   auto channel =
-      grpc::CreateChannel(FLAGS_server_address, grpc::InsecureChannelCredentials());
+      grpc::CreateChannel(FLAGS_include_processor_server_address, grpc::InsecureChannelCredentials());
   std::unique_ptr<ProcessIncludesService::Stub> stub(ProcessIncludesService::NewStub(channel));
   ClientContext context;  // No deadline.
   include_processor::StatsRequest req;
@@ -243,15 +244,15 @@ int IncludeProcessorStats() {
 
 int GetInputsFromIncludeProcessor(const string& cmd_id, int argc, char** argv, const char** env,
                                   const string& cwd, set<string>* inputs) {
-  string server_address = FLAGS_server_address;
-  if (FLAGS_server_instances > 1) {
+  string server_address = FLAGS_include_processor_server_address;
+  if (FLAGS_include_processor_server_instances > 1) {
     int port = 8070;
-    vector<string> parts = absl::StrSplit(FLAGS_server_address, ':');
+    vector<string> parts = absl::StrSplit(FLAGS_include_processor_server_address, ':');
     if (!absl::SimpleAtoi(parts[1], &port)) {
       cerr << "If INCLUDE_SERVER_INSTANCES>1, INCLUDE_SERVER_ADDRESS should be host:port.";
       return 35;
     }
-    port += rand() % FLAGS_server_instances;
+    port += rand() % FLAGS_include_processor_server_instances;
     server_address = absl::StrCat(parts[0], ":", port).c_str();
   }
   ProcessIncludesRequest req;
@@ -448,8 +449,10 @@ int CreateRunRequest(int argc, char** argv, const char** env,
   req->add_command("run_remote");
   req->add_command("--name");
   req->add_command(cmd_id);
-  req->add_command("--invocation_id");
-  req->add_command(FLAGS_invocation_id);
+  if (FLAGS_invocation_id != "") {
+    req->add_command("--invocation_id");
+    req->add_command(FLAGS_invocation_id);
+  }
   req->add_command("--accept_cached");
   req->add_command(FLAGS_accept_cached ? "true" : "false");
   req->add_command("--save_execution_data");
@@ -515,19 +518,14 @@ int CreateRunRequest(int argc, char** argv, const char** env,
   req->add_command("\\.o-.*$");
   req->add_command("\\.git.*$");
   req->add_command("--environment_variables");
-  string env_vars;
+  string env_vars = "PWD=" + kPWDOverride + ",";
+  std::set<std::string> whitelist = absl::StrSplit(FLAGS_env_whitelist, ',', absl::SkipEmpty());
   while (*env) {
     string varval(*env++);
     unsigned int eq_index = varval.find("=");
     string var = varval.substr(0, eq_index);
-    if (var == "PWD") {
+    if (whitelist.find(var) != whitelist.end()) {
       absl::StrAppend(&env_vars, varval, ",");
-      continue;
-    }
-    for (const auto& whitelisted_var : absl::StrSplit(FLAGS_env_whitelist, ',', absl::SkipEmpty())) {
-      if (var == whitelisted_var) {
-        absl::StrAppend(&env_vars, varval, ",");
-      }
     }
   }
   if (env_vars.length() > 1) {
@@ -589,7 +587,7 @@ int ExecuteCommand(int argc, char** argv, const char** env) {
   if (FLAGS_verbose) {  // Enable profilig with VERBOSE.
     start_time = std::chrono::high_resolution_clock::now();
   }
-  setenv("PWD", "/proc/self/cwd", true);  // Will apply to both local and remote commands.
+  setenv("PWD", kPWDOverride.c_str(), true);  // Will apply to both local and remote commands.
   // Build local command arguments.
   vector<const char*> args;
   args.reserve(argc);
@@ -664,9 +662,11 @@ int SelectAndRunCommand(int argc, char** argv, const char** env) {
          return 1;
       }
       return ExecuteCommand(argc-sep_idx-1, &argv[sep_idx+1], env);
-  } else if (FLAGS_command == "include_stats") {
+  }
+  if (FLAGS_command == "include_stats") {
     return IncludeProcessorStats();
-  } else if (FLAGS_command == "list_includes") {
+  }
+  if (FLAGS_command == "list_includes") {
     std::chrono::time_point<std::chrono::high_resolution_clock> start_time, end_time;
     start_time = std::chrono::high_resolution_clock::now();
     set<string> includes;
