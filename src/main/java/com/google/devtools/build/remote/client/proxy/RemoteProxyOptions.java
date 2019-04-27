@@ -33,4 +33,9 @@ public final class RemoteProxyOptions {
       description = "The maximum number of concurrent jobs to run.")
   //TODO(olaola): implement a good default for "auto" based on system capacity.
   public int jobs = 100;
+
+  @Parameter(
+      names = "--stats_records",
+      description = "The maximum number of stats records to keep.")
+  public int statsRecords = 50000;
 }
