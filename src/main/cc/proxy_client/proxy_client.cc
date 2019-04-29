@@ -519,7 +519,7 @@ int CreateRunRequest(int argc, char** argv, const char** env,
   req->add_command("\\.git.*$");
   req->add_command("--environment_variables");
   string env_vars = "PWD=" + kPWDOverride + ",";
-  std::set<std::string> whitelist = absl::StrSplit(FLAGS_env_whitelist, ',', absl::SkipEmpty());
+  set<string> whitelist = absl::StrSplit(FLAGS_env_whitelist, ',', absl::SkipEmpty());
   while (*env) {
     string varval(*env++);
     unsigned int eq_index = varval.find("=");
