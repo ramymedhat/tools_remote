@@ -412,9 +412,6 @@ int ComputeInputs(int argc, char** argv, const char** env, const string& cwd, co
   if (use_args_inputs) {
     inputs->insert(inputs_from_args.begin(), inputs_from_args.end());
   }
-  // Common inputs:
-  inputs->insert("build");  // Needed for Android 9?
-  inputs->insert("toolchain");
   inputs->insert(GetCompilerDir(argv[4]));  // For both compile and link commands?
   if (is_assembler) {
     // Horrible hack for Android 7 assembly actions.
