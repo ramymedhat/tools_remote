@@ -60,6 +60,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
+import java.util.concurrent.CancellationException;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.Future;
 import java.util.logging.Level;
@@ -387,16 +388,36 @@ class ByteStreamUploader extends AbstractReferenceCounted {
                   return null;
                 },
                 MoreExecutors.directExecutor());
+        // A future that only completes once the upload and internal state updates have
+        // been completed.
+        SettableFuture<Void> uploadAndBookkeepingComplete = SettableFuture.create();
         for (Chunker chunker : batch) {
           Digest digest = chunker.digest();
-          uploadsInProgress.put(digest, uploadResult);
-          result.put(digest, uploadResult);
+          uploadsInProgress.put(digest, uploadAndBookkeepingComplete);
+          result.put(digest, uploadAndBookkeepingComplete);
         }
+        uploadAndBookkeepingComplete.addListener(
+            () -> {
+              if (uploadAndBookkeepingComplete.isCancelled()) {
+                uploadResult.cancel(true);
+              }
+            },
+            MoreExecutors.directExecutor());
         uploadResult.addListener(
             () -> {
               synchronized (lock) {
                 for (Chunker chunker : batch) {
                   uploadsInProgress.remove(chunker.digest());
+                }
+                try {
+                  uploadResult.get();
+                  uploadAndBookkeepingComplete.set(null);
+                } catch (ExecutionException e) {
+                  uploadAndBookkeepingComplete.setException(e.getCause());
+                } catch (CancellationException e) {
+                  uploadAndBookkeepingComplete.cancel(true);
+                } catch (Throwable e) {
+                  uploadAndBookkeepingComplete.setException(e);
                 }
               }
             },

@@ -43,8 +43,8 @@ import com.google.devtools.build.remote.client.util.Utils;
 import io.grpc.StatusRuntimeException;
 import io.grpc.Status.Code;
 import io.grpc.stub.StreamObserver;
-import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.ConcurrentLinkedQueue;
+import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
 
@@ -81,6 +81,16 @@ final class CommandServer extends CommandServiceImplBase {
     this.executorService = MoreExecutors.listeningDecorator(realExecutor);
   }
 
+  private void addRecord(RunRecord.Builder record) {
+    records.add(record);
+    if (records.size() > proxyOptions.statsRecords) {
+      // Repeat the condition in order to reduce the size of the critical section.
+      synchronized (this) {
+        while (records.size() > proxyOptions.statsRecords) records.remove();
+      }
+    }
+  }
+
   @Override
   public void run(RunRequest req, StreamObserver<RunResponse> responseObserver) {
     Utils.vlog(client.verbosity(),3,"Received request:\n%s", req);
@@ -112,7 +122,7 @@ final class CommandServer extends CommandServiceImplBase {
 
     RecordingOutErr outErr = new RecordingOutErr();
     RunRecord.Builder record = client.newFromCommandOptions(cmdOptions);
-    records.add(record);
+    addRecord(record);
     ListenableFuture<Void> future =
         executorService.submit(() -> {
           client.runRemote(cmdOptions, outErr, record, new String[]{});

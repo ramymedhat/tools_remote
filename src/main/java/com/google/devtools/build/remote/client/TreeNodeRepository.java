@@ -505,7 +505,7 @@ public final class TreeNodeRepository {
         return null;
       }
     }
-    return treeNodeDigestCache.get(node);
+    return Preconditions.checkNotNull(treeNodeDigestCache.get(node));
   }
 
   /**

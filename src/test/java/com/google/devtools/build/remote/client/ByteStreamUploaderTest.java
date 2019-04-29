@@ -260,6 +260,8 @@ public class ByteStreamUploaderTest {
             .build();
 
     List<Chunker> chunkers = new ArrayList<>();
+    chunkers.add(Chunker.builder(DIGEST_UTIL).setInput(new byte[301]).build());  // Separate Write.
+    // All these will be packed in two batches.
     chunkers.add(
         Chunker.builder(DIGEST_UTIL).setInput("abc".getBytes(UTF_8)).setChunkSize(1).build());
     chunkers.add(
@@ -267,7 +269,7 @@ public class ByteStreamUploaderTest {
     chunkers.add(
         Chunker.builder(DIGEST_UTIL).setInput("bar".getBytes(UTF_8)).setChunkSize(1).build());
     chunkers.add( // Already added, will get ignored.
-        Chunker.builder(DIGEST_UTIL).setInput("abc".getBytes(UTF_8)).setChunkSize(1).build());
+        Chunker.builder(DIGEST_UTIL).setInput("abc".getBytes(UTF_8)).build());
     chunkers.add(
         Chunker.builder(DIGEST_UTIL).setInput("bloblo".getBytes(UTF_8)).setChunkSize(1).build());
     chunkers.add(
@@ -282,7 +284,12 @@ public class ByteStreamUploaderTest {
           public void batchUpdateBlobs(
               BatchUpdateBlobsRequest request,
               StreamObserver<BatchUpdateBlobsResponse> responseObserver) {
-            if (numCalls.incrementAndGet() == 0) {
+            long totalSize = request.getRequestsList().stream()
+                .mapToLong(r -> r.getDigest().getSizeBytes())
+                .sum();
+            assertThat(totalSize).isAtMost(300L);
+            assertThat(request.getRequestsCount()).isAtMost(10);
+            if (numCalls.incrementAndGet() == 2) {
               responseObserver.onNext(
                   BatchUpdateBlobsResponse.newBuilder()
                       .addResponses(
@@ -300,12 +307,39 @@ public class ByteStreamUploaderTest {
             responseObserver.onCompleted();
           }
         });
+    serviceRegistry.addService(
+        new ByteStreamImplBase() {
+          @Override
+          public StreamObserver<WriteRequest> write(StreamObserver<WriteResponse> response) {
+            return new StreamObserver<WriteRequest>() {
+
+              @Override
+              public void onNext(WriteRequest writeRequest) {
+                if (writeRequest.getWriteOffset() == 0) {
+                  numBlobs.incrementAndGet();
+                  numCalls.incrementAndGet();
+                }
+              }
+
+              @Override
+              public void onError(Throwable throwable) {
+                fail("onError occurred with: " + throwable);
+              }
+
+              @Override
+              public void onCompleted() {
+                response.onNext(WriteResponse.getDefaultInstance());
+                response.onCompleted();
+              }
+            };
+          }
+        });
 
     uploader.uploadBlobs(chunkers, true, RunRecord.newBuilder());
 
     blockUntilInternalStateConsistent(uploader);
-    assertThat(numBlobs.get()).isEqualTo(5);
-    assertThat(numCalls.get()).isEqualTo(2);
+    assertThat(numBlobs.get()).isEqualTo(6);
+    assertThat(numCalls.get()).isEqualTo(4);  // One call got retried.
 
     withEmptyMetadata.detach(prevContext);
   }
@@ -329,7 +363,7 @@ public class ByteStreamUploaderTest {
     List<Chunker> chunkers = new ArrayList<>(numUploads);
     Random rand = new Random();
     for (int i = 0; i < numUploads; i++) {
-      int blobSize = rand.nextInt(1000) + 10;
+      int blobSize = rand.nextInt(4000) + 10;
       byte[] blob = new byte[blobSize];
       rand.nextBytes(blob);
       Chunker chunker = Chunker.builder(DIGEST_UTIL).setInput(blob).setChunkSize(1).build();
@@ -347,10 +381,14 @@ public class ByteStreamUploaderTest {
               BatchUpdateBlobsRequest request,
               StreamObserver<BatchUpdateBlobsResponse> responseObserver) {
             numCalls.incrementAndGet();
+            int totalSize = 0;
             for (BatchUpdateBlobsRequest.Request r : request.getRequestsList()) {
               numBlobs.incrementAndGet();
+              totalSize += r.getDigest().getSizeBytes();
               assertThat(blobsByHash).containsKey(r.getDigest().getHash());
             }
+            assertThat(totalSize).isAtMost(3000);
+            assertThat(request.getRequestsCount()).isAtMost(100);
             responseObserver.onNext(BatchUpdateBlobsResponse.getDefaultInstance());
             responseObserver.onCompleted();
           }
