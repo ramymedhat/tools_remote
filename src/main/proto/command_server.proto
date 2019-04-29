@@ -148,6 +148,7 @@ message RunCommandParameters {
   map<string,string> platform = 12;
   string server_logs_path = 13;
   int32 execution_timeout = 14;
+  string working_directory = 15;
 }
 
 message LocalTimestamps {

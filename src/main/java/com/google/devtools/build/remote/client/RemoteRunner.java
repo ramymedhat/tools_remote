@@ -130,6 +130,7 @@ public class RemoteRunner {
             .setValue(options.environmentVariables.get(var));
       }
     }
+    command.setWorkingDirectory(options.workingDirectory);
     return command.build();
   }
 
