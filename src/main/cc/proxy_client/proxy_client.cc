@@ -24,6 +24,7 @@
 #include "absl/strings/str_cat.h"
 #include "absl/strings/str_join.h"
 #include "absl/strings/str_split.h"
+#include "gflags/gflags.h"
 #include "src/main/cc/ipc/goma_ipc.h"
 #include "src/main/cc/proxy_client/javac_remote_actions.h"
 #include "src/main/proto/command_server.grpc.pb.h"
@@ -32,6 +33,34 @@
 #include "src/main/proto/include_processor.grpc.pb.h"
 
 #define INCLUDE_PROCESSOR_PROXY_FAILURE 44
+
+DEFINE_bool(local_fallback, true, "Fallback to local execution if remote "
+            "execution fails");
+DEFINE_bool(verbose, false, "Verbose mode");
+DEFINE_bool(force_remote, false, "Force the command to be run remotely");
+DEFINE_bool(accept_cached, true, "Indicate whether to accept action cache results");
+DEFINE_bool(save_exec_data, false, "Indicate whether to save full execution data");
+DEFINE_bool(allow_out_under_in, false, "Indicate whether to allow outputs under"
+            " input directories");
+DEFINE_bool(allow_out_dirs, false, "Indicate whether to allow output directories"
+            " as inputs");
+DEFINE_string(out_dir, "out", "Name of the output directory");
+DEFINE_string(invocation_id, "", "Invocation ID of the build");
+DEFINE_int32(retry_count, 1, "Number of remote retries to attempt");
+DEFINE_int32(proxy_instances, 1, "Number of remote client proxy instances");
+DEFINE_string(proxy_address, "localhost:8080", "Address of the remote client proxy");
+DEFINE_int32(include_processor_server_instances, 1, "Number of include processor server instances");
+DEFINE_string(include_processor_server_address, "localhost:8070", "Address of the include processor server");
+DEFINE_string(command, "", "Type of command: run, list_includes, include_stats");
+DEFINE_string(inputs, "", "Comma-seperated list of input files/directories");
+DEFINE_string(outputs, "", "Comma-seperated list of output files");
+DEFINE_string(env_whitelist, "", "Comma-seperated list of environment variables to "
+              "pass-through to the remote environment");
+
+static bool IsValidCommand(const char *flagname, const std::string &value) {
+  return value == "run" || value == "list_includes" || value == "include_stats";
+}
+DEFINE_validator(command, &IsValidCommand);
 
 namespace remote_client {
 
@@ -56,6 +85,7 @@ using std::istreambuf_iterator;
 using std::max;
 
 const char* kFileArgPrefix = "file:";
+const string kPWDOverride = "/proc/self/cwd";
 
 bool PathExists(const string& s, bool *is_directory) {
   struct stat st;
@@ -197,12 +227,8 @@ void FindAllFilesFromCommand(int argc, char** argv, set<string>* files) {
 }
 
 int IncludeProcessorStats() {
-  const char* server_address = getenv("INCLUDE_SERVER_ADDRESS");
-  if (!server_address) {
-    server_address = "localhost:8070";
-  }
   auto channel =
-      grpc::CreateChannel(server_address, grpc::InsecureChannelCredentials());
+      grpc::CreateChannel(FLAGS_include_processor_server_address, grpc::InsecureChannelCredentials());
   std::unique_ptr<ProcessIncludesService::Stub> stub(ProcessIncludesService::NewStub(channel));
   ClientContext context;  // No deadline.
   include_processor::StatsRequest req;
@@ -218,37 +244,27 @@ int IncludeProcessorStats() {
 
 int GetInputsFromIncludeProcessor(const string& cmd_id, int argc, char** argv, const char** env,
                                   const string& cwd, set<string>* inputs) {
-  const char* server_address = getenv("INCLUDE_SERVER_ADDRESS");
-  if (!server_address) {
-    server_address = "localhost:8070";
-  }
-  const char* server_instances_var = getenv("INCLUDE_SERVER_INSTANCES");
-  int server_instances = 1;
-  if (server_instances_var && !absl::SimpleAtoi(server_instances_var, &server_instances)) {
-    cerr << "INCLUDE_SERVER_INSTANCES should be an integer.";
-    return 35;
-  }
-  if (server_instances > 1) {
+  string server_address = FLAGS_include_processor_server_address;
+  if (FLAGS_include_processor_server_instances > 1) {
     int port = 8070;
-    vector<string> parts = absl::StrSplit(server_address, ':');
+    vector<string> parts = absl::StrSplit(FLAGS_include_processor_server_address, ':');
     if (!absl::SimpleAtoi(parts[1], &port)) {
       cerr << "If INCLUDE_SERVER_INSTANCES>1, INCLUDE_SERVER_ADDRESS should be host:port.";
       return 35;
     }
-    port += rand() % server_instances;
+    port += rand() % FLAGS_include_processor_server_instances;
     server_address = absl::StrCat(parts[0], ":", port).c_str();
   }
   ProcessIncludesRequest req;
   req.set_command_id(cmd_id);
   req.set_cwd(GetCwd());
-  for (int i = 4; i < argc; ++i) {
+  for (int i = 0; i < argc; ++i) {
     req.add_args(argv[i]);
   }
   while (*env) {
     req.add_envs(*env++);
   }
-  bool verbose = getenv("VERBOSE") != nullptr;
-  if (verbose) {
+  if (FLAGS_verbose) {
     cout << "Calling remote server on " << server_address << "\n" << req.DebugString();
   }
   auto channel =
@@ -261,7 +277,7 @@ int GetInputsFromIncludeProcessor(const string& cmd_id, int argc, char** argv, c
     cout << "ProcessIncludes rpc failed:" << status.error_message() << "\n";
     return 1;
   }
-  if (verbose) {
+  if (FLAGS_verbose) {
     cout << "Server returned response:\n" << resp.DebugString() << "\n";
   }
   if (resp.time_msec() > 500) {
@@ -313,13 +329,12 @@ void ExpandFileArguments(set<string>* args) {
 int ComputeInputs(int argc, char** argv, const char** env, const string& cwd, const string& cmd_id,
                   bool *is_compile, bool* is_javac, set<string>* inputs) {
   set<string> inputs_from_args;
-  if (!absl::StartsWith(argv[2], "-inputs:")) {
-    cerr << "Missing -inputs\n";
+  if (FLAGS_inputs == "") {
+    cerr << "Missing inputs\n";
     return 1;
   }
-  const char* input_arg = argv[2] + 8;
   bool is_assembler = false;
-  for (const auto& input : absl::StrSplit(input_arg, ',', absl::SkipEmpty())) {
+  for (const auto& input : absl::StrSplit(FLAGS_inputs, ',', absl::SkipEmpty())) {
     inputs_from_args.insert(string(input));
     if (absl::EndsWith(input, ".S") ||  absl::EndsWith(input, ".s")) {
       is_assembler = true;
@@ -334,7 +349,7 @@ int ComputeInputs(int argc, char** argv, const char** env, const string& cwd, co
   *is_compile = false;
   set<string> cc_input_args({"-I", "-c", "-isystem", "-quote"});
   vector<string> input_prefixes({"-L", "--gcc_toolchain"});
-  for (int i = 5; i < argc; ++i) {
+  for (int i = 0; i < argc; ++i) {
     if (next_is_input) {
       inputs_from_args.insert(argv[i]);
     }
@@ -354,7 +369,7 @@ int ComputeInputs(int argc, char** argv, const char** env, const string& cwd, co
 
   bool use_args_inputs = false;
   *is_javac = IsJavacAction(argc, argv);
-  bool is_header_abi_dumper = string(argv[4]).find("header-abi-dumper") != std::string::npos;
+  bool is_header_abi_dumper = string(argv[1]).find("header-abi-dumper") != std::string::npos;
   if (*is_compile) {
     int proc_res = GetInputsFromIncludeProcessor(cmd_id, argc, argv, env, cwd, inputs);
     if (proc_res != 0) {
@@ -378,7 +393,7 @@ int ComputeInputs(int argc, char** argv, const char** env, const string& cwd, co
       }
     }
     for(int i = 0; i < argc; ++i) {
-        if (i==4) {
+        if (i==1) {
           // Only Android @ head has header-abi-dumper, which uses
           // clang-r349610.
           if (is_c)
@@ -404,7 +419,7 @@ int ComputeInputs(int argc, char** argv, const char** env, const string& cwd, co
     inputs->insert("prebuilts/jdk/jdk9/linux-x86");
     inputs->insert("external/icu");
     FindAllFilesFromCommand(argc, argv, inputs);
-  } else if (getenv("RUN_ALL_REMOTELY")) {
+  } else if (FLAGS_force_remote) {
     use_args_inputs = true;
     FindAllFilesFromCommand(argc, argv, inputs);
   }
@@ -412,7 +427,7 @@ int ComputeInputs(int argc, char** argv, const char** env, const string& cwd, co
   if (use_args_inputs) {
     inputs->insert(inputs_from_args.begin(), inputs_from_args.end());
   }
-  inputs->insert(GetCompilerDir(argv[4]));  // For both compile and link commands?
+  inputs->insert(GetCompilerDir(argv[0]));  // For both compile and link commands?
   if (is_assembler) {
     // Horrible hack for Android 7 assembly actions.
     inputs->insert("prebuilts/gcc/linux-x86/arm/arm-linux-androideabi-4.9/arm-linux-androideabi/bin/as");
@@ -431,30 +446,21 @@ int CreateRunRequest(int argc, char** argv, const char** env,
   req->add_command("run_remote");
   req->add_command("--name");
   req->add_command(cmd_id);
-  char* invocation_id = getenv("INVOCATION_ID");
-  if (invocation_id != nullptr) {
+  if (FLAGS_invocation_id != "") {
     req->add_command("--invocation_id");
-    req->add_command(invocation_id);
+    req->add_command(FLAGS_invocation_id);
   }
-  char* accept_cached = getenv("ACCEPT_CACHED");
-  if (accept_cached != nullptr) {
-    req->add_command("--accept_cached");
-    req->add_command(accept_cached);
-  }
-  char* save_exec_data = getenv("SAVE_EXECUTION_DATA");
-  if (save_exec_data != nullptr) {
-    req->add_command("--save_execution_data");
-    req->add_command(save_exec_data);
-  }
+  req->add_command("--accept_cached");
+  req->add_command(FLAGS_accept_cached ? "true" : "false");
+  req->add_command("--save_execution_data");
+  req->add_command(FLAGS_save_exec_data ? "true" : "false");
   string cwd = GetCwd();
   set<string> outputs;
-  const char* outputs_arg = argv[3];
-  if (!absl::StartsWith(outputs_arg, "-outputs:")) {
-    cerr << "Missing -outputs\n";
+  if (FLAGS_outputs == "") {
+    cerr << "Missing outputs\n";
     return 1;
   }
-  outputs_arg += 9;
-  for (const auto& output : absl::StrSplit(outputs_arg, ',', absl::SkipEmpty())) {
+  for (const auto& output : absl::StrSplit(FLAGS_outputs, ',', absl::SkipEmpty())) {
     outputs.insert(string(output));
     if (absl::EndsWith(output, ".o")) {
       outputs.insert(absl::StrCat(output, ".d"));
@@ -474,15 +480,15 @@ int CreateRunRequest(int argc, char** argv, const char** env,
   if (!inputs.empty()) {
     req->add_command("--inputs");
   }
-  bool allow_outputs_under_inputs = *is_javac || getenv("ALLOW_OUTPUTS_UNDER_INPUTS") != nullptr;
-  bool allow_output_directories_as_inputs = *is_javac || getenv("ALLOW_OUTPUT_DIRECTORIES_AS_INPUTS") != nullptr;
+  bool allow_outputs_under_inputs = *is_javac || FLAGS_allow_out_under_in;
+  bool allow_output_directories_as_inputs = *is_javac || FLAGS_allow_out_dirs;
   for (const auto& input : inputs) {
     string inp = NormalizedRelativePath(cwd, input);
     bool is_directory = false;
     if (inp.empty() || inp == "." || !PathExists(inp, &is_directory)) {
       continue;
     }
-    if (!allow_output_directories_as_inputs && is_directory && absl::StartsWith(inp, "out/")) {
+    if (!allow_output_directories_as_inputs && is_directory && absl::StartsWith(inp, FLAGS_out_dir + "/")) {
       continue;
     }
     if (!allow_outputs_under_inputs) {
@@ -500,7 +506,7 @@ int CreateRunRequest(int argc, char** argv, const char** env,
     req->add_command(inp);
   }
   req->add_command("--command");
-  for (int i = 4; i < argc; ++i) {
+  for (int i = 0; i < argc; ++i) {
     req->add_command(NormalizedRelativePath(cwd, string(argv[i])));
   }
   req->add_command("--ignore_inputs");
@@ -509,13 +515,15 @@ int CreateRunRequest(int argc, char** argv, const char** env,
   req->add_command("\\.o-.*$");
   req->add_command("\\.git.*$");
   req->add_command("--environment_variables");
-  string env_vars;
+  string env_vars = "PWD=" + kPWDOverride + ",";
+  set<string> whitelist = absl::StrSplit(FLAGS_env_whitelist, ',', absl::SkipEmpty());
   while (*env) {
     string varval(*env++);
     unsigned int eq_index = varval.find("=");
     string var = varval.substr(0, eq_index);
-    if (var == "PWD")
+    if (whitelist.find(var) != whitelist.end()) {
       absl::StrAppend(&env_vars, varval, ",");
+    }
   }
   if (env_vars.length() > 1) {
     req->add_command(env_vars.substr(0, env_vars.length() - 1));
@@ -530,27 +538,18 @@ int CreateRunRequest(int argc, char** argv, const char** env,
 }
 
 int ExecuteRemotely(const RunRequest& req) {
-  const char* proxy_address = getenv("PROXY_ADDRESS");
-  if (!proxy_address) {
-    proxy_address = "localhost:8080";
-  }
-  const char* proxy_instances_var = getenv("PROXY_INSTANCES");
-  int proxy_instances = 1;
-  if (proxy_instances_var && !absl::SimpleAtoi(proxy_instances_var, &proxy_instances)) {
-    cerr << "PROXY_INSTANCES should be an integer.";
-    return 35;
-  }
-  if (proxy_instances > 1) {
+  string proxy_address = FLAGS_proxy_address;
+  if (FLAGS_proxy_instances > 1) {
     int port = 8080;
-    vector<string> parts = absl::StrSplit(proxy_address, ':');
+    vector<string> parts = absl::StrSplit(FLAGS_proxy_address, ':');
     if (!absl::SimpleAtoi(parts[1], &port)) {
-      cerr << "If PROXY_INSTANCES>1, PROXY_ADDRESS should be host:port.";
+      cerr << "If proxy_instances>1, proxy_address should be host:port.";
       return 35;
     }
-    port += rand() % proxy_instances;
-    proxy_address = absl::StrCat(parts[0], ":", port).c_str();
+    port += rand() % FLAGS_proxy_instances;
+    proxy_address = absl::StrCat(parts[0], ":", port);
   }
-  if (getenv("VERBOSE")) {
+  if (FLAGS_verbose) {
     cout << "Calling remote proxy on " << proxy_address << "\n" << req.DebugString();
   }
   auto channel =
@@ -582,15 +581,14 @@ int ExecuteRemotely(const RunRequest& req) {
 int ExecuteCommand(int argc, char** argv, const char** env) {
   std::chrono::time_point<std::chrono::high_resolution_clock> start_time,
       proxy_start_time, end_time;
-  const char* verbose = getenv("VERBOSE");
-  if (verbose) {  // Enable profilig with VERBOSE.
+  if (FLAGS_verbose) {  // Enable profilig with VERBOSE.
     start_time = std::chrono::high_resolution_clock::now();
   }
-  setenv("PWD", "/proc/self/cwd", true);  // Will apply to both local and remote commands.
+  setenv("PWD", kPWDOverride.c_str(), true);  // Will apply to both local and remote commands.
   // Build local command arguments.
   vector<const char*> args;
-  args.reserve(argc - 3);
-  for (int i = 4; i < argc; ++i) {
+  args.reserve(argc);
+  for (int i = 0; i < argc; ++i) {
     args.emplace_back(argv[i]);
   }
   args.emplace_back(nullptr);
@@ -603,36 +601,30 @@ int ExecuteCommand(int argc, char** argv, const char** env) {
   if (create_run_res != 0) {
     return create_run_res;  // Failed to create request.
   }
-  if (!is_compile && !is_javac && !getenv("RUN_ALL_REMOTELY")) {
+  if (!is_compile && !is_javac && !FLAGS_force_remote) {
     // Only run compile actions remotely for now.
-    if (verbose) {
+    if (FLAGS_verbose) {
       cout << "Executing non-compile action locally: " << local_cmd << "\n";
     }
     return execvp(args[0], const_cast<char**>(args.data()));
   }
-  if (verbose) {
+  if (FLAGS_verbose) {
     proxy_start_time = std::chrono::high_resolution_clock::now();
   }
   int exit_code = 1;
   int sleep_ms = 500;
-  const char* attempts_str = getenv("REMOTE_RETRY");
-  int attempts = 1;
-  if (attempts_str && !absl::SimpleAtoi(attempts_str, &attempts)) {
-    cerr << "REMOTE_RETRY variable should be an integer.\n";
-    return 1;
-  }
-  for (int i = 0; i < attempts; ++i) {
+  for (int i = 0; i < FLAGS_retry_count; ++i) {
     exit_code = ExecuteRemotely(req);
     if (!exit_code) {
       break;
     }
     cerr << "FAILED " << cmd_id << " (exit_code = " << exit_code << ", attempt " << i + 1 << ")\n";
-    if (i < attempts - 1) {
+    if (i < FLAGS_retry_count - 1) {
       std::this_thread::sleep_for(std::chrono::milliseconds(sleep_ms));
       sleep_ms *= 2;
     }
   }
-  if (verbose) {
+  if (FLAGS_verbose) {
     end_time = std::chrono::high_resolution_clock::now();
     milliseconds remote_ms = duration_cast<milliseconds>(end_time - proxy_start_time);
     milliseconds overhead_ms = duration_cast<milliseconds>(proxy_start_time - start_time);
@@ -640,12 +632,7 @@ int ExecuteCommand(int argc, char** argv, const char** env) {
          << " msec, overhead time " << overhead_ms.count() << " msec\n";
   }
   if (exit_code) {
-    bool fallback = true;
-    char *val = getenv("LOCAL_FALLBACK");
-    if (val && !strcmp(val, "false")) {
-      fallback = false;
-    }
-    if (fallback) {
+    if (FLAGS_local_fallback) {
       cout << "Falling back to local execution " << cmd_id << "\n";
       return execvp(args[0], const_cast<char**>(args.data()));
     }
@@ -655,16 +642,28 @@ int ExecuteCommand(int argc, char** argv, const char** env) {
 
 int SelectAndRunCommand(int argc, char** argv, const char** env) {
   srand(time(nullptr));
-  // Hack to allow goma_ctl ensure_start to work. This is called by
-  // the Android @head build when USE_GOMA is set.
-  if (!strcmp(argv[1], "tmp_dir")) {
-    const char *tmp_dir = "/tmp/goma_tmp";
-    mkdir(tmp_dir, 0777);
-    cout << tmp_dir << "\n";
-    return 0;
+  gflags::SetUsageMessage("RBE client for remote proxy");
+  int sep_idx = argc;
+  for (int i = 1; i < argc; i++) {
+    if (!strcmp(argv[i], "--")) {
+      sep_idx = i;
+      break;
+    }
   }
-
-  if (!strcmp(argv[1], "list_includes")) {
+  gflags::ParseCommandLineFlags(&sep_idx, &argv, false);
+  if (FLAGS_command == "run") {
+      if (sep_idx == argc) {
+        cout << "You set the command to 'run'.\n";
+         cout << "Usage: " << gflags::ProgramInvocationShortName() <<
+              " [--arg=val] --command=run -- [full command]\n";
+         return 1;
+      }
+      return ExecuteCommand(argc-sep_idx-1, &argv[sep_idx+1], env);
+  }
+  if (FLAGS_command == "include_stats") {
+    return IncludeProcessorStats();
+  }
+  if (FLAGS_command == "list_includes") {
     std::chrono::time_point<std::chrono::high_resolution_clock> start_time, end_time;
     start_time = std::chrono::high_resolution_clock::now();
     set<string> includes;
@@ -680,16 +679,6 @@ int SelectAndRunCommand(int argc, char** argv, const char** env) {
     return result;
   }
 
-  if (!strcmp(argv[1], "run")) {
-    return ExecuteCommand(argc, argv, env);
-  }
-
-  if (!strcmp(argv[1], "include_stats")) {
-    return IncludeProcessorStats();
-  }
-
-  cerr << "Unrecognized command " << argv[1]
-       << ", supported commands are \"run\", \"tmp_dir\", \"list_includes\", \"include_stats\"\n";
   return 35;
 }
 

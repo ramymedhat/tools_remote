@@ -1,6 +1,7 @@
 workspace(name = "remote_client")
 
 load("@bazel_tools//tools/build_defs/repo:http.bzl", "http_archive")
+load("@bazel_tools//tools/build_defs/repo:git.bzl", "git_repository")
 
 # Needed for protobuf.
 http_archive(
@@ -30,6 +31,17 @@ http_archive(
         "https://github.com/grpc/grpc/archive/v1.17.2.tar.gz",
         "https://mirror.bazel.build/github.com/grpc/grpc/archive/v1.17.2.tar.gz",
     ],
+)
+
+git_repository(
+    name   = "com_github_gflags_gflags",
+    commit = "30dbc81fb5ffdc98ea9b14b1918bfe4e8779b26e", # v2.2.0 + fix of include path
+    remote = "https://github.com/gflags/gflags.git"
+)
+
+bind(
+    name   = "gflags",
+    actual = "@com_github_gflags_gflags//:gflags",
 )
 
 # Pull in all gRPC dependencies.
