@@ -339,6 +339,13 @@ public final class RemoteClientOptions {
     public Map<String,String> platform = null;
 
     @Parameter(
+        names = "--working_directory",
+        description = "The working directory, relative to the exec root, for the command to run " +
+            "in. It must be a directory which exists in the input tree. If it is left " +
+            "empty, then the action is run in the exec root.")
+    public String workingDirectory = "";
+
+    @Parameter(
         names = "--server_logs_path",
         converter = PathConverter.class,
         description = "Optional path to save server logs for failed actions.")

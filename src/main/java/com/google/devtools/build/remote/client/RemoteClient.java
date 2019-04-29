@@ -827,6 +827,7 @@ public class RemoteClient {
         .setBuildRequestId(options.buildRequestId)
         .setInvocationId(options.invocationId)
         .setName(options.name)
+        .setWorkingDirectory(options.workingDirectory)
         .setAcceptCached(options.acceptCached)
         .setDoNotCache(options.doNotCache)
         .addAllInputs(options.inputs.stream().map(Path::toString).collect(Collectors.toList()))
