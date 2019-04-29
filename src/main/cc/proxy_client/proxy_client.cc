@@ -109,12 +109,15 @@ string NormalizedRelativePath(const string& cwd, const string& path) {
       : path;
   vector<string> segments = absl::StrSplit(rel_path, '/', absl::SkipEmpty());
   auto iter = segments.begin();
+  int idx = 0;
   while (iter != segments.end()) {
     if (*iter == ".") {
       iter = segments.erase(iter);
       continue;
     }
     if (*iter == "..") {
+      if (idx == 0)
+        break;
       // If the previous segment has any one of the following characters,
       // don't erase the whole previous segment but instead erase only the
       // relevant portions of the previous segment.
@@ -350,6 +353,7 @@ int ComputeInputs(int argc, char** argv, const char** env, const string& cwd, co
   set<string> cc_input_args({"-I", "-c", "-isystem", "-quote"});
   vector<string> input_prefixes({"-L", "--gcc_toolchain"});
   for (int i = 0; i < argc; ++i) {
+    cout << "Looping" << argv[i] << "\n";
     if (next_is_input) {
       inputs_from_args.insert(argv[i]);
     }
@@ -642,6 +646,7 @@ int ExecuteCommand(int argc, char** argv, const char** env) {
 
 int SelectAndRunCommand(int argc, char** argv, const char** env) {
   srand(time(nullptr));
+  cout << GetCwd() << "\n";
   gflags::SetUsageMessage("RBE client for remote proxy");
   int sep_idx = argc;
   for (int i = 1; i < argc; i++) {
