@@ -34,7 +34,7 @@
 
 #define INCLUDE_PROCESSOR_PROXY_FAILURE 44
 
-DEFINE_bool(local_fallback, true, "Fallback to local execution if remote "
+DEFINE_bool(local_fallback, false, "Fallback to local execution if remote "
             "execution fails");
 DEFINE_bool(verbose, false, "Verbose mode");
 DEFINE_bool(force_remote, false, "Force the command to be run remotely");
@@ -42,7 +42,7 @@ DEFINE_bool(accept_cached, true, "Indicate whether to accept action cache result
 DEFINE_bool(save_exec_data, false, "Indicate whether to save full execution data");
 DEFINE_bool(allow_out_under_in, false, "Indicate whether to allow outputs under"
             " input directories");
-DEFINE_bool(allow_out_dirs, false, "Indicate whether to allow output directories"
+DEFINE_bool(allow_out_dirs, true, "Indicate whether to allow output directories"
             " as inputs");
 DEFINE_string(out_dir, "out", "Name of the output directory");
 DEFINE_string(invocation_id, "", "Invocation ID of the build");
@@ -54,6 +54,7 @@ DEFINE_string(include_processor_server_address, "localhost:8070", "Address of th
 DEFINE_string(command, "", "Type of command: run, list_includes, include_stats");
 DEFINE_string(inputs, "", "Comma-seperated list of input files/directories");
 DEFINE_string(outputs, "", "Comma-seperated list of output files");
+DEFINE_string(working_directory, "./", "Working directory of the remote command");
 DEFINE_string(env_whitelist, "", "Comma-seperated list of environment variables to "
               "pass-through to the remote environment");
 
@@ -107,6 +108,9 @@ string NormalizedRelativePath(const string& cwd, const string& path) {
   string rel_path = absl::StartsWith(path, cwd)
       ? path.substr(cwd.length() + 1, path.length())
       : path;
+  if (rel_path.find("/home/abdelaal/fuchsia/") != string::npos) {
+    rel_path.replace(rel_path.find("/home/abdelaal/fuchsia/"), 22, "../../");
+  }
   vector<string> segments = absl::StrSplit(rel_path, '/', absl::SkipEmpty());
   auto iter = segments.begin();
   int idx = 0;
@@ -164,6 +168,9 @@ string RelativeToAbsolutePath(const string& cwd, const char* path) {
 
 string GetCompilerDir(const char* compiler) {
   string compiler_dir = string(compiler);
+  if (FLAGS_verbose) {
+    cout << "Compiler: " << compiler_dir << "\n";
+  }
   auto pos = compiler_dir.rfind('/');
   if (pos != string::npos) {
     pos = compiler_dir.rfind('/', pos - 1);
@@ -353,7 +360,6 @@ int ComputeInputs(int argc, char** argv, const char** env, const string& cwd, co
   set<string> cc_input_args({"-I", "-c", "-isystem", "-quote"});
   vector<string> input_prefixes({"-L", "--gcc_toolchain"});
   for (int i = 0; i < argc; ++i) {
-    cout << "Looping" << argv[i] << "\n";
     if (next_is_input) {
       inputs_from_args.insert(argv[i]);
     }
@@ -379,6 +385,7 @@ int ComputeInputs(int argc, char** argv, const char** env, const string& cwd, co
     if (proc_res != 0) {
       return proc_res;
     }
+    use_args_inputs = true;
     if (inputs->empty()) {
       use_args_inputs = true;
       // We successfully called the include processor, but it returned no values.
@@ -431,7 +438,8 @@ int ComputeInputs(int argc, char** argv, const char** env, const string& cwd, co
   if (use_args_inputs) {
     inputs->insert(inputs_from_args.begin(), inputs_from_args.end());
   }
-  inputs->insert(GetCompilerDir(argv[0]));  // For both compile and link commands?
+  string compiler(argv[0]);
+  inputs->insert(GetCompilerDir(NormalizedRelativePath(cwd + "out/default.zircon", compiler).c_str()));  // For both compile and link commands?
   if (is_assembler) {
     // Horrible hack for Android 7 assembly actions.
     inputs->insert("prebuilts/gcc/linux-x86/arm/arm-linux-androideabi-4.9/arm-linux-androideabi/bin/as");
@@ -459,6 +467,15 @@ int CreateRunRequest(int argc, char** argv, const char** env,
   req->add_command("--save_execution_data");
   req->add_command(FLAGS_save_exec_data ? "true" : "false");
   string cwd = GetCwd();
+  if (FLAGS_working_directory != "") {
+    req->add_command("--working_directory");
+    if (cwd.find("out/default.zircon") != string::npos)
+      req->add_command("out/default.zircon");
+    else if (cwd.find("out/default") != string::npos)
+      req->add_command("out/default");
+  }
+  string parent = cwd + "/../../";
+  string parent_cwd(realpath(parent.c_str(), NULL));
   set<string> outputs;
   if (FLAGS_outputs == "") {
     cerr << "Missing outputs\n";
@@ -473,7 +490,12 @@ int CreateRunRequest(int argc, char** argv, const char** env,
   }
   req->add_command("--output_files");  // We don't know whether these are files or directories.
   for (const auto& output : outputs) {
-    req->add_command(NormalizedRelativePath(cwd, output));
+    string out = cwd + "/" + output;
+    out.replace(0,parent_cwd.length()+1, "");
+    if (FLAGS_verbose) {
+      cout << "out final: " << out << "\n";
+    }
+    req->add_command(out);
   }
   set<string> inputs;
   int compute_input_res = ComputeInputs(argc, argv, env, cwd, cmd_id, is_compile, is_javac, &inputs);
@@ -487,9 +509,19 @@ int CreateRunRequest(int argc, char** argv, const char** env,
   bool allow_outputs_under_inputs = *is_javac || FLAGS_allow_out_under_in;
   bool allow_output_directories_as_inputs = *is_javac || FLAGS_allow_out_dirs;
   for (const auto& input : inputs) {
-    string inp = NormalizedRelativePath(cwd, input);
+    //string inp = NormalizedRelativePath(cwd, input);
+    string full_inp = cwd + "/" + input;
+    // const char *real = realpath(full_inp.c_str(), NULL);
+    // if (real == nullptr)
+    //   continue;
+    // string inp(real);
+    string inp = full_inp;
+    inp.replace(0,parent_cwd.length()+1, "");
+    if (FLAGS_verbose) {
+      cout << inp << "\n";
+    }
     bool is_directory = false;
-    if (inp.empty() || inp == "." || !PathExists(inp, &is_directory)) {
+    if (inp.empty() || inp == "." || !PathExists("../../" + inp, &is_directory)) {
       continue;
     }
     if (!allow_output_directories_as_inputs && is_directory && absl::StartsWith(inp, FLAGS_out_dir + "/")) {
@@ -511,15 +543,14 @@ int CreateRunRequest(int argc, char** argv, const char** env,
   }
   req->add_command("--command");
   for (int i = 0; i < argc; ++i) {
-    req->add_command(NormalizedRelativePath(cwd, string(argv[i])));
+    req->add_command(NormalizedRelativePath(GetCwd(), string(argv[i])));
   }
   req->add_command("--ignore_inputs");
   req->add_command("\\.d$");
   req->add_command("\\.P$");
   req->add_command("\\.o-.*$");
   req->add_command("\\.git.*$");
-  req->add_command("--environment_variables");
-  string env_vars = "PWD=" + kPWDOverride + ",";
+  string env_vars = "";//"PWD=" + kPWDOverride + ",";
   set<string> whitelist = absl::StrSplit(FLAGS_env_whitelist, ',', absl::SkipEmpty());
   while (*env) {
     string varval(*env++);
@@ -530,6 +561,7 @@ int CreateRunRequest(int argc, char** argv, const char** env,
     }
   }
   if (env_vars.length() > 1) {
+    req->add_command("--environment_variables");
     req->add_command(env_vars.substr(0, env_vars.length() - 1));
   }
   req->add_command("--platform");
@@ -646,7 +678,6 @@ int ExecuteCommand(int argc, char** argv, const char** env) {
 
 int SelectAndRunCommand(int argc, char** argv, const char** env) {
   srand(time(nullptr));
-  cout << GetCwd() << "\n";
   gflags::SetUsageMessage("RBE client for remote proxy");
   int sep_idx = argc;
   for (int i = 1; i < argc; i++) {
